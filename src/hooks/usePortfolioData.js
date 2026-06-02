@@ -2,6 +2,38 @@ import { useState, useEffect, useCallback } from 'react'
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbznax24d_H7JzF7j4Sp_FLV_yI8qJIiRjsEZq7IwJFJM4lVYqLub9TeKScLO3c5A4Y/exec'
 
+// JSONP fetch — bypasses CORS for Apps Script
+function jsonp(url) {
+  return new Promise((resolve, reject) => {
+    const cbName = '_cb_' + Math.random().toString(36).slice(2)
+    const script = document.createElement('script')
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error('Request timed out'))
+    }, 60000)
+
+    function cleanup() {
+      clearTimeout(timeout)
+      delete window[cbName]
+      if (script.parentNode) script.parentNode.removeChild(script)
+    }
+
+    window[cbName] = (data) => {
+      cleanup()
+      resolve(data)
+    }
+
+    script.onerror = () => {
+      cleanup()
+      reject(new Error('Script load failed'))
+    }
+
+    const sep = url.includes('?') ? '&' : '?'
+    script.src = url + sep + 'callback=' + cbName + '&cb=' + Date.now()
+    document.head.appendChild(script)
+  })
+}
+
 export function usePortfolioData() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -12,9 +44,7 @@ export function usePortfolioData() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${APPS_SCRIPT_URL}?action=getAllData&cb=${Date.now()}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = await res.json()
+      const json = await jsonp(`${APPS_SCRIPT_URL}?action=getAllData`)
       setData(json)
       setLastUpdated(new Date())
     } catch (e) {
@@ -31,20 +61,14 @@ export function usePortfolioData() {
   return { data, loading, error, lastUpdated, refresh: fetchData }
 }
 
-export async function fetchWorkstationData(ticker) {
-  const res = await fetch(`${APPS_SCRIPT_URL}?action=getWorkstationData&ticker=${encodeURIComponent(ticker)}&cb=${Date.now()}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+export function fetchWorkstationData(ticker) {
+  return jsonp(`${APPS_SCRIPT_URL}?action=getWorkstationData&ticker=${encodeURIComponent(ticker)}`)
 }
 
-export async function fetchCompareData(tickerA, tickerB) {
-  const res = await fetch(`${APPS_SCRIPT_URL}?action=getCompareData&tickerA=${encodeURIComponent(tickerA)}&tickerB=${encodeURIComponent(tickerB)}&cb=${Date.now()}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+export function fetchCompareData(tickerA, tickerB) {
+  return jsonp(`${APPS_SCRIPT_URL}?action=getCompareData&tickerA=${encodeURIComponent(tickerA)}&tickerB=${encodeURIComponent(tickerB)}`)
 }
 
-export async function fetchMyTickers() {
-  const res = await fetch(`${APPS_SCRIPT_URL}?action=getMyTickers&cb=${Date.now()}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+export function fetchMyTickers() {
+  return jsonp(`${APPS_SCRIPT_URL}?action=getMyTickers`)
 }
