@@ -1,3 +1,4 @@
+import React from 'react'
 import { useState } from 'react'
 import { Search, BarChart2, TrendingUp, Newspaper, Award } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'

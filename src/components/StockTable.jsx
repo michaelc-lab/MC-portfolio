@@ -1,3 +1,4 @@
+import React from 'react'
 import { useState, useMemo } from 'react'
 import { Search, ChevronUp, ChevronDown, ChevronsUpDown, X } from 'lucide-react'
 import { fmtPrice, fmtPct, pctClass, statusBadgeClass, ddClass, sortRows, filterRows } from '../lib/utils'

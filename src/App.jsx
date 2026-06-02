@@ -1,3 +1,4 @@
+import React from 'react'
 import { useState } from 'react'
 import { usePortfolioData } from './hooks/usePortfolioData'
 import Header from './components/Header'

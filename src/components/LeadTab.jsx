@@ -1,3 +1,4 @@
+import React from 'react'
 import { TrendingUp, TrendingDown, Zap, AlertTriangle } from 'lucide-react'
 import { fmtPrice, fmtPct, pctClass, ddClass } from '../lib/utils'
 

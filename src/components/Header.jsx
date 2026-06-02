@@ -1,3 +1,4 @@
+import React from 'react'
 import { RefreshCw, Activity } from 'lucide-react'
 import { fmtPrice, fmtPct, pctClass, formatTime } from '../lib/utils'
 
