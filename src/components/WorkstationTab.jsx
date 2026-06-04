@@ -1,5 +1,4 @@
-import React from 'react'
-import { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Search, BarChart2, TrendingUp, Newspaper, Award } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
@@ -97,12 +96,13 @@ function AnalystBar({ analyst }) {
   )
 }
 
-function AnalyzeView({ myTickers, portfolio, watchlist }) {
+function AnalyzeView({ portfolio, watchlist, initialTicker }) {
   const [ticker, setTicker] = useState('')
   const [selectVal, setSelectVal] = useState('')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const hasAutoRun = useRef(false)
 
   const run = async (t) => {
     const target = (t || ticker || selectVal || '').trim().toUpperCase()
@@ -115,6 +115,15 @@ function AnalyzeView({ myTickers, portfolio, watchlist }) {
     } catch (e) { setError(e.message) }
     finally { setLoading(false) }
   }
+
+  // Auto-run when coming from "Analyze →" button in Portfolio/Watchlist
+  useEffect(() => {
+    if (initialTicker && !hasAutoRun.current) {
+      hasAutoRun.current = true
+      setTicker(initialTicker)
+      run(initialTicker)
+    }
+  }, [initialTicker])
 
   const allStocks = [...(portfolio || []), ...(watchlist || [])]
   const livePrice = data ? allStocks.find(r => r.ticker === data.ticker) : null
@@ -383,9 +392,8 @@ function CompareView({ portfolio, watchlist }) {
   )
 }
 
-export default function WorkstationTab({ portfolio, watchlist }) {
+export default function WorkstationTab({ portfolio, watchlist, initialTicker }) {
   const [sub, setSub] = useState('analyze')
-  const [pendingTicker, setPendingTicker] = useState(null)
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -402,7 +410,7 @@ export default function WorkstationTab({ portfolio, watchlist }) {
       </div>
 
       {sub === 'analyze'
-        ? <AnalyzeView portfolio={portfolio} watchlist={watchlist} />
+        ? <AnalyzeView portfolio={portfolio} watchlist={watchlist} initialTicker={initialTicker} />
         : <CompareView portfolio={portfolio} watchlist={watchlist} />
       }
     </div>
