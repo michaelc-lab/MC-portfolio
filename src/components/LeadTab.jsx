@@ -134,12 +134,12 @@ function UpcomingEarnings() {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
         <Calendar size={14} className="text-terminal-amber" />
         <span className="font-display font-semibold text-[13px] text-slate-200">Upcoming Earnings</span>
-        <span className="ml-auto font-mono text-[10px] uppercase tracking-wider text-slate-600">Next 7 days · My portfolio</span>
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-wider text-slate-600">Next 14 days · My portfolio</span>
       </div>
       {loading ? (
         <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider animate-pulse">Loading…</div>
       ) : !earnings?.length ? (
-        <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider">No earnings in your portfolio this week</div>
+        <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider">No earnings scheduled in the next 14 days for your tickers</div>
       ) : (
         <table className="data-table">
           <thead>
