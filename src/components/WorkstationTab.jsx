@@ -149,16 +149,6 @@ function PriceChartWithPeriods({ chart, earnings }) {
 // =====================================================
 // REVENUE CHART
 // =====================================================
-const RevTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="panel-bright px-3 py-2 text-[11px] font-mono">
-      <div className="text-slate-400 mb-1">{label}</div>
-      <div className="text-electric-300">${fmtLarge(payload[0]?.value)}</div>
-    </div>
-  )
-}
-
 function RevenueChart({ revenueData }) {
   if (!revenueData || !revenueData.reported || !revenueData.reported.length) {
     return <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600 uppercase tracking-wider">No revenue data available</div>
@@ -166,16 +156,34 @@ function RevenueChart({ revenueData }) {
 
   const data = [...revenueData.reported].reverse().map(r => ({
     period: r.period ? r.period.slice(0, 7) : '',
-    revenue: r.revenue,
+    actual: r.revenue,
+    estimate: r.revenueEstimate || null,
   }))
+
+  const RevTooltipInner = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null
+    return (
+      <div className="panel-bright px-3 py-2 text-[11px] font-mono">
+        <div className="text-slate-400 mb-1">{label}</div>
+        {payload.map(p => (
+          <div key={p.dataKey} style={{ color: p.fill }}>
+            {p.dataKey === 'actual' ? 'Actual' : 'Estimate'}: ${fmtLarge(p.value)}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const hasEstimates = data.some(d => d.estimate != null)
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+      <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }} barCategoryGap="20%">
         <XAxis dataKey="period" tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }} tickLine={false} axisLine={false} />
         <YAxis tickFormatter={v => '$' + fmtLarge(v)} tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }} tickLine={false} axisLine={false} width={60} />
-        <Tooltip content={<RevTooltip />} />
-        <Bar dataKey="revenue" fill="rgba(14,165,233,0.6)" radius={[3, 3, 0, 0]} />
+        <Tooltip content={<RevTooltipInner />} />
+        <Bar dataKey="actual" name="Actual" fill="rgba(14,165,233,0.7)" radius={[3, 3, 0, 0]} />
+        {hasEstimates && <Bar dataKey="estimate" name="Estimate" fill="rgba(255,184,0,0.35)" radius={[3, 3, 0, 0]} />}
       </BarChart>
     </ResponsiveContainer>
   )
