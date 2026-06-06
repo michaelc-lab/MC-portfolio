@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { TrendingUp, TrendingDown, Zap, AlertTriangle, Activity, Calendar } from 'lucide-react'
 import { fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
 
@@ -110,8 +110,11 @@ function ATHTable({ rows }) {
 function UpcomingEarnings() {
   const [earnings, setEarnings] = useState(null)
   const [loading, setLoading] = useState(true)
+  const fetched = useRef(false)
 
   useEffect(() => {
+    if (fetched.current) return
+    fetched.current = true
     jsonp(`${APPS_SCRIPT_URL}?action=getUpcomingEarnings`)
       .then(data => { setEarnings(Array.isArray(data) ? data : []); setLoading(false) })
       .catch(() => { setEarnings([]); setLoading(false) })
