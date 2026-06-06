@@ -150,41 +150,76 @@ function PriceChartWithPeriods({ chart, earnings }) {
 // REVENUE CHART
 // =====================================================
 function RevenueChart({ revenueData }) {
-  if (!revenueData || !revenueData.reported || !revenueData.reported.length) {
-    return <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600 uppercase tracking-wider">No revenue data available</div>
-  }
-
-  // Data comes already in Q1/Q2 format, just reverse to chronological order
-  const data = [...revenueData.reported].reverse().map(r => ({
-    period: r.period || '',
-    actual: r.revenue,
-    estimate: r.revenueEstimate || null,
-  }))
-
-  const RevTooltipInner = ({ active, payload, label }) => {
-    if (!active || !payload?.length) return null
+  if (!revenueData || !revenueData.quarters || !revenueData.quarters.length) {
     return (
-      <div className="panel-bright px-3 py-2 text-[11px] font-mono">
-        <div className="text-slate-400 mb-1">{label}</div>
-        {payload.map(p => (
-          <div key={p.dataKey} style={{ color: p.fill }}>
-            {p.dataKey === 'actual' ? 'Actual' : 'Estimate'}: ${fmtLarge(p.value)}
-          </div>
-        ))}
+      <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600 uppercase tracking-wider">
+        No revenue data available
       </div>
     )
   }
 
-  const hasEstimates = data.some(d => d.estimate != null)
+  const data = revenueData.quarters.map(q => ({
+    label: q.label,
+    actual: q.actual,
+    estimate: q.estimate,
+    isForward: q.isForward,
+  }))
+
+  const RevTooltipInner = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null
+    const quarter = data.find(d => d.label === label)
+    return (
+      <div className="panel-bright px-3 py-2.5 text-[11px] font-mono space-y-1">
+        <div className="text-slate-300 font-semibold mb-1">{label} {quarter?.isForward ? '(forecast)' : '(reported)'}</div>
+        {payload.map(p => p.value != null && (
+          <div key={p.dataKey} style={{ color: p.fill === 'rgba(14,165,233,0.85)' ? '#38bdf8' : '#fbbf24' }}>
+            {p.dataKey === 'actual' ? '● Actual: ' : '○ Estimate: '}
+            ${fmtLarge(p.value)}
+          </div>
+        ))}
+        {payload.length === 2 && payload[0].value && payload[1].value && (
+          <div className={`text-[10px] mt-1 ${payload[0].value >= payload[1].value ? 'positive' : 'negative'}`}>
+            {payload[0].value >= payload[1].value ? '▲ Beat' : '▼ Missed'} by {fmtPct(((payload[0].value - payload[1].value) / payload[1].value) * 100, 1)}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }} barCategoryGap="20%">
-        <XAxis dataKey="period" tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }} tickLine={false} axisLine={false} />
-        <YAxis tickFormatter={v => '$' + fmtLarge(v)} tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }} tickLine={false} axisLine={false} width={60} />
+      <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }} barCategoryGap="25%" barGap={3}>
+        <XAxis
+          dataKey="label"
+          tick={({ x, y, payload }) => {
+            const q = data.find(d => d.label === payload.value)
+            return (
+              <g transform={`translate(${x},${y})`}>
+                <text x={0} y={0} dy={14} textAnchor="middle"
+                  fill={q?.isForward ? '#fbbf24' : '#475569'}
+                  fontSize={9} fontFamily="IBM Plex Mono">
+                  {payload.value}
+                </text>
+                {q?.isForward && (
+                  <text x={0} y={0} dy={24} textAnchor="middle" fill="#fbbf2480" fontSize={7} fontFamily="IBM Plex Mono">
+                    est
+                  </text>
+                )}
+              </g>
+            )
+          }}
+          tickLine={false} axisLine={false}
+        />
+        <YAxis
+          tickFormatter={v => '$' + fmtLarge(v)}
+          tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }}
+          tickLine={false} axisLine={false} width={60}
+        />
         <Tooltip content={<RevTooltipInner />} />
-        <Bar dataKey="actual" name="Actual" fill="rgba(14,165,233,0.7)" radius={[3, 3, 0, 0]} />
-        {hasEstimates && <Bar dataKey="estimate" name="Estimate" fill="rgba(255,184,0,0.35)" radius={[3, 3, 0, 0]} />}
+        {/* Actual revenue — blue, solid */}
+        <Bar dataKey="actual" name="Actual" fill="rgba(14,165,233,0.85)" radius={[3, 3, 0, 0]} />
+        {/* Estimate — amber, semi-transparent */}
+        <Bar dataKey="estimate" name="Estimate" fill="rgba(251,191,36,0.45)" radius={[3, 3, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   )
@@ -396,7 +431,15 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
               <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <BarChart2 size={14} className="text-electric-400" />
                 <span className="font-display font-semibold text-[13px] text-slate-200">Quarterly Revenue</span>
-                <div className="ml-auto flex items-center gap-3"><span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500"><span style={{width:10,height:10,borderRadius:2,background:'rgba(14,165,233,0.7)',display:'inline-block',marginRight:2}} />Actual</span><span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500"><span style={{width:10,height:10,borderRadius:2,background:'rgba(255,184,0,0.35)',display:'inline-block',marginRight:2}} />Estimate</span></div>
+                <div className="ml-auto flex items-center gap-3">
+            <span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
+              <span style={{width:10,height:10,borderRadius:2,background:'rgba(14,165,233,0.85)',display:'inline-block'}} /> Actual
+            </span>
+            <span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
+              <span style={{width:10,height:10,borderRadius:2,background:'rgba(251,191,36,0.45)',display:'inline-block'}} /> Estimate
+            </span>
+            <span className="text-[9px] font-mono text-yellow-500/60 uppercase tracking-wider">yellow label = forecast</span>
+          </div>
               </div>
               <div className="h-48">
                 {revenueData
