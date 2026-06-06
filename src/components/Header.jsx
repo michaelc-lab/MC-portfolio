@@ -89,7 +89,6 @@ export default function Header({ data, loading, error, lastUpdated, onRefresh })
           <StripItem icon="Au" label="Gold" value={commodities.GOLD ? fmtPrice(commodities.GOLD) : '—'} change={commodities.GOLD_change} iconBg="bg-yellow-400" />
           <StripItem icon="Ag" label="Silver" value={commodities.SILVER ? fmtPrice(commodities.SILVER) : '—'} change={commodities.SILVER_change} iconBg="bg-slate-300" />
           <StripItem icon="Cu" label="Copper" value={commodities.COPPER ? '$' + commodities.COPPER.toFixed(2) : '—'} change={commodities.COPPER_change} iconBg="bg-orange-400" />
-          <StripItem icon="Oi" label="Oil" value={commodities.OIL ? fmtPrice(commodities.OIL) : '—'} change={commodities.OIL_change} iconBg="bg-green-700" />
         </div>
 
       </div>
