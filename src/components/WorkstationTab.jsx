@@ -154,8 +154,9 @@ function RevenueChart({ revenueData }) {
     return <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600 uppercase tracking-wider">No revenue data available</div>
   }
 
+  // Data comes already in Q1/Q2 format, just reverse to chronological order
   const data = [...revenueData.reported].reverse().map(r => ({
-    period: r.period ? r.period.slice(0, 7) : '',
+    period: r.period || '',
     actual: r.revenue,
     estimate: r.revenueEstimate || null,
   }))
@@ -392,8 +393,10 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
             {/* Revenue chart */}
             <div className="panel p-4">
               <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <BarChart2 size={14} className="text-electric-400" />
                 <span className="font-display font-semibold text-[13px] text-slate-200">Quarterly Revenue</span>
+                <div className="ml-auto flex items-center gap-3"><span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500"><span style={{width:10,height:10,borderRadius:2,background:'rgba(14,165,233,0.7)',display:'inline-block',marginRight:2}} />Actual</span><span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500"><span style={{width:10,height:10,borderRadius:2,background:'rgba(255,184,0,0.35)',display:'inline-block',marginRight:2}} />Estimate</span></div>
               </div>
               <div className="h-48">
                 {revenueData
