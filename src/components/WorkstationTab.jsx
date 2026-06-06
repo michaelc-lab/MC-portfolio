@@ -149,6 +149,21 @@ function PriceChartWithPeriods({ chart, earnings }) {
 // =====================================================
 // REVENUE CHART
 // =====================================================
+const RevTooltip = ({ active, payload, label, quarters }) => {
+  if (!active || !payload?.length) return null
+  const quarter = (quarters || []).find(d => d.label === label)
+  return (
+    <div className="panel-bright px-3 py-2.5 text-[11px] font-mono space-y-1">
+      <div className="text-slate-300 font-semibold mb-1">{label} {quarter?.isForward ? '(forecast)' : '(reported)'}</div>
+      {payload.map(p => p.value != null && (
+        <div key={p.dataKey} style={{ color: p.dataKey === 'actual' ? '#38bdf8' : '#fbbf24' }}>
+          {p.dataKey === 'actual' ? '● Actual: ' : '○ Estimate: '}${fmtLarge(p.value)}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function RevenueChart({ revenueData }) {
   if (!revenueData || !revenueData.quarters || !revenueData.quarters.length) {
     return (
@@ -164,27 +179,6 @@ function RevenueChart({ revenueData }) {
     estimate: q.estimate,
     isForward: q.isForward,
   }))
-
-  const RevTooltipInner = ({ active, payload, label }) => {
-    if (!active || !payload?.length) return null
-    const quarter = data.find(d => d.label === label)
-    return (
-      <div className="panel-bright px-3 py-2.5 text-[11px] font-mono space-y-1">
-        <div className="text-slate-300 font-semibold mb-1">{label} {quarter?.isForward ? '(forecast)' : '(reported)'}</div>
-        {payload.map(p => p.value != null && (
-          <div key={p.dataKey} style={{ color: p.fill === 'rgba(14,165,233,0.85)' ? '#38bdf8' : '#fbbf24' }}>
-            {p.dataKey === 'actual' ? '● Actual: ' : '○ Estimate: '}
-            ${fmtLarge(p.value)}
-          </div>
-        ))}
-        {payload.length === 2 && payload[0].value && payload[1].value && (
-          <div className={`text-[10px] mt-1 ${payload[0].value >= payload[1].value ? 'positive' : 'negative'}`}>
-            {payload[0].value >= payload[1].value ? '▲ Beat' : '▼ Missed'} by {fmtPct(((payload[0].value - payload[1].value) / payload[1].value) * 100, 1)}
-          </div>
-        )}
-      </div>
-    )
-  }
 
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -215,7 +209,7 @@ function RevenueChart({ revenueData }) {
           tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }}
           tickLine={false} axisLine={false} width={60}
         />
-        <Tooltip content={<RevTooltipInner />} />
+        <Tooltip content={(props) => <RevTooltip {...props} quarters={data} />} />
         {/* Actual revenue — blue, solid */}
         <Bar dataKey="actual" name="Actual" fill="rgba(14,165,233,0.85)" radius={[3, 3, 0, 0]} />
         {/* Estimate — amber, semi-transparent */}
