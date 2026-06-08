@@ -39,12 +39,8 @@ const CustomTooltip = ({ active, payload, label }) => {
   )
 }
 
-// =====================================================
-// CHART WITH PERIOD SELECTOR
-// =====================================================
 function PriceChartWithPeriods({ chart, earnings }) {
   const [period, setPeriod] = useState('1Y')
-
   const periods = ['1D', '1W', '1M', '3M', '1Y', 'YTD']
 
   const filterChart = (data, p) => {
@@ -70,20 +66,19 @@ function PriceChartWithPeriods({ chart, earnings }) {
   const isPositive = pctChange !== null && pctChange >= 0
   const earningsDates = (earnings || []).map(e => e.period).filter(Boolean)
 
-  if (!filtered.length) return (
-    <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600 uppercase tracking-wider">
-      No data for this period
-    </div>
-  )
+  if (!filtered.length) {
+    return (
+      <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600 uppercase tracking-wider">
+        No data for this period
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header row with price + period buttons */}
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex items-center gap-3">
-          {lastPrice && (
-            <span className="font-mono font-bold text-lg text-slate-100">{fmtPrice(lastPrice)}</span>
-          )}
+          {lastPrice && <span className="font-mono font-bold text-lg text-slate-100">{fmtPrice(lastPrice)}</span>}
           {pctChange !== null && (
             <span className={`font-mono text-sm font-semibold ${isPositive ? 'positive' : 'negative'}`}>
               {fmtPct(pctChange)} ({period})
@@ -92,49 +87,33 @@ function PriceChartWithPeriods({ chart, earnings }) {
         </div>
         <div className="flex gap-1">
           {periods.map(p => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
+            <button key={p} onClick={() => setPeriod(p)}
               className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase tracking-wider border transition-all ${
-                period === p
-                  ? 'bg-electric-500 text-navy-950 border-electric-500 font-bold'
-                  : 'border-white/10 text-slate-500 hover:text-slate-300 hover:border-white/20'
-              }`}
-            >
+                period === p ? 'bg-electric-500 text-navy-950 border-electric-500 font-bold' : 'border-white/10 text-slate-500 hover:text-slate-300 hover:border-white/20'
+              }`}>
               {p}
             </button>
           ))}
         </div>
       </div>
-
-      {/* Chart */}
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={filtered} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-            <XAxis
-              dataKey="date"
-              tickFormatter={d => {
-                if (!d) return ''
-                const date = new Date(d)
-                if (period === '1D' || period === '1W') return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-                return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-              }}
+            <XAxis dataKey="date"
+              tickFormatter={d => { if (!d) return ''; const date = new Date(d); return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) }}
               tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }}
               tickLine={false} axisLine={false}
               interval={Math.max(1, Math.floor(filtered.length / 6))}
             />
-            <YAxis
-              tickFormatter={v => '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v.toFixed(0))}
+            <YAxis tickFormatter={v => '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v.toFixed(0))}
               tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }}
-              tickLine={false} axisLine={false} width={55}
-              domain={['auto', 'auto']}
+              tickLine={false} axisLine={false} width={55} domain={['auto', 'auto']}
             />
             <Tooltip content={<CustomTooltip />} />
             {earningsDates.map(d => (
               <ReferenceLine key={d} x={d} stroke="rgba(255,184,0,0.4)" strokeWidth={1} strokeDasharray="3 3" />
             ))}
-            <Line
-              type="monotone" dataKey="close"
+            <Line type="monotone" dataKey="close"
               stroke={isPositive ? '#00ff88' : '#ff4466'}
               strokeWidth={1.5} dot={false}
               activeDot={{ r: 4, fill: isPositive ? '#00ff88' : '#ff4466', stroke: 'none' }}
@@ -146,18 +125,14 @@ function PriceChartWithPeriods({ chart, earnings }) {
   )
 }
 
-// =====================================================
-// REVENUE CHART
-// =====================================================
-const RevTooltip = ({ active, payload, label, quarters }) => {
+const RevTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
-  const quarter = (quarters || []).find(d => d.label === label)
   return (
-    <div className="panel-bright px-3 py-2.5 text-[11px] font-mono space-y-1">
-      <div className="text-slate-300 font-semibold mb-1">{label} {quarter?.isForward ? '(forecast)' : '(reported)'}</div>
-      {payload.map(p => p.value != null && (
-        <div key={p.dataKey} style={{ color: p.dataKey === 'actual' ? '#38bdf8' : '#fbbf24' }}>
-          {p.dataKey === 'actual' ? '● Actual: ' : '○ Estimate: '}{'$'}{fmtLarge(p.value)}
+    <div className="panel-bright px-3 py-2 text-[11px] font-mono">
+      <div className="text-slate-400 mb-1">{label}</div>
+      {payload.filter(p => p.value != null).map(p => (
+        <div key={p.dataKey} className="text-electric-300">
+          {p.dataKey === 'actual' ? 'Actual: ' : 'Estimate: '}{'$'}{fmtLarge(p.value)}
         </div>
       ))}
     </div>
@@ -172,56 +147,24 @@ function RevenueChart({ revenueData }) {
       </div>
     )
   }
-
   const data = revenueData.quarters.map(q => ({
     label: q.label,
     actual: q.actual,
     estimate: q.estimate,
-    isForward: q.isForward,
   }))
-
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }} barCategoryGap="25%" barGap={3}>
-        <XAxis
-          dataKey="label"
-          tick={({ x, y, payload }) => {
-            const q = data.find(d => d.label === payload.value)
-            return (
-              <g transform={`translate(${x},${y})`}>
-                <text x={0} y={0} dy={14} textAnchor="middle"
-                  fill={q?.isForward ? '#fbbf24' : '#475569'}
-                  fontSize={9} fontFamily="IBM Plex Mono">
-                  {payload.value}
-                </text>
-                {q?.isForward && (
-                  <text x={0} y={0} dy={24} textAnchor="middle" fill="#fbbf2480" fontSize={7} fontFamily="IBM Plex Mono">
-                    est
-                  </text>
-                )}
-              </g>
-            )
-          }}
-          tickLine={false} axisLine={false}
-        />
-        <YAxis
-          tickFormatter={v => '$' + fmtLarge(v)}
-          tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }}
-          tickLine={false} axisLine={false} width={60}
-        />
-        <Tooltip content={(props) => <RevTooltip {...props} quarters={data} />} />
-        {/* Actual revenue — blue, solid */}
+        <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }} tickLine={false} axisLine={false} />
+        <YAxis tickFormatter={v => '$' + fmtLarge(v)} tick={{ fontSize: 9, fill: '#475569', fontFamily: 'IBM Plex Mono' }} tickLine={false} axisLine={false} width={60} />
+        <Tooltip content={<RevTooltip />} />
         <Bar dataKey="actual" name="Actual" fill="rgba(14,165,233,0.85)" radius={[3, 3, 0, 0]} />
-        {/* Estimate — amber, semi-transparent */}
         <Bar dataKey="estimate" name="Estimate" fill="rgba(251,191,36,0.45)" radius={[3, 3, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   )
 }
 
-// =====================================================
-// ANALYST BAR
-// =====================================================
 function AnalystBar({ analyst }) {
   if (!analyst) return <div className="text-[11px] font-mono text-slate-600 text-center py-4">No analyst data</div>
   const total = (analyst.strongBuy || 0) + (analyst.buy || 0) + (analyst.hold || 0) + (analyst.sell || 0) + (analyst.strongSell || 0)
@@ -252,9 +195,6 @@ function AnalystBar({ analyst }) {
   )
 }
 
-// =====================================================
-// ANALYZE VIEW
-// =====================================================
 function AnalyzeView({ portfolio, watchlist, initialTicker }) {
   const [ticker, setTicker] = useState('')
   const [selectVal, setSelectVal] = useState('')
@@ -270,15 +210,17 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
     setLoading(true); setError(null); setData(null); setRevenueData(null)
     try {
       const d = await fetchWorkstationData(target)
-      if (!d?.profile?.name) throw new Error(`No data for "${target}" — may not be supported on Finnhub free tier`)
+      if (!d?.profile?.name) throw new Error('No data for "' + target + '" — may not be supported on Finnhub free tier')
       setData(d)
-      // Fetch revenue data in parallel
       try {
-        const rev = await jsonp(`${APPS_SCRIPT_URL}?action=getRevenueData&ticker=${encodeURIComponent(target)}`)
+        const rev = await jsonp(APPS_SCRIPT_URL + '?action=getRevenueData&ticker=' + encodeURIComponent(target))
         setRevenueData(rev)
       } catch (e) { /* revenue is optional */ }
-    } catch (e) { setError(e.message) }
-    finally { setLoading(false) }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -300,27 +242,20 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
   return (
     <div className="space-y-4">
       <div className="flex gap-2 flex-wrap items-center">
-        <select
-          value={selectVal}
-          onChange={e => { setSelectVal(e.target.value); setTicker('') }}
-          className="bg-navy-800/60 border border-white/10 rounded px-3 py-2.5 text-[12px] font-mono text-slate-400 focus:outline-none focus:border-electric-500/40 flex-1 min-w-48 appearance-none cursor-pointer"
-        >
+        <select value={selectVal} onChange={e => { setSelectVal(e.target.value); setTicker('') }}
+          className="bg-navy-800/60 border border-white/10 rounded px-3 py-2.5 text-[12px] font-mono text-slate-400 focus:outline-none focus:border-electric-500/40 flex-1 min-w-48 appearance-none cursor-pointer">
           <option value="">— Pick from my list —</option>
-          {[...(portfolio || []), ...(watchlist || [])].map(r => (
-            <option key={r.ticker} value={r.ticker}>{r.ticker} — {r.company}</option>
-          ))}
+          {allStocks.map(r => <option key={r.ticker} value={r.ticker}>{r.ticker} — {r.company}</option>)}
         </select>
         <div className="relative flex-1 min-w-48">
           <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
-          <input
-            value={ticker}
-            onChange={e => { setTicker(e.target.value); setSelectVal('') }}
+          <input value={ticker} onChange={e => { setTicker(e.target.value); setSelectVal('') }}
             onKeyDown={e => e.key === 'Enter' && run()}
             placeholder="…or type any US ticker (NVDA, AAPL)"
-            className="w-full bg-navy-800/60 border border-white/10 rounded px-8 py-2.5 text-[12px] font-mono text-slate-300 placeholder-slate-600 focus:outline-none focus:border-electric-500/40"
-          />
+            className="w-full bg-navy-800/60 border border-white/10 rounded px-8 py-2.5 text-[12px] font-mono text-slate-300 placeholder-slate-600 focus:outline-none focus:border-electric-500/40" />
         </div>
-        <button onClick={() => run()} disabled={loading} className="btn-primary px-5 py-2.5 rounded font-mono text-[12px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2">
+        <button onClick={() => run()} disabled={loading}
+          className="btn-primary px-5 py-2.5 rounded font-mono text-[12px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2">
           <BarChart2 size={13} />
           {loading ? 'Loading…' : 'Analyze'}
         </button>
@@ -331,7 +266,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
 
       {data && !loading && (
         <div className="space-y-4 animate-slide-up">
-          {/* Header */}
           <div className="panel-bright p-5">
             <div className="flex items-center gap-4 flex-wrap">
               {data.profile?.logo && <img src={data.profile.logo} alt="" className="w-14 h-14 rounded-xl bg-navy-800 p-1.5 border border-white/10 object-contain" />}
@@ -355,9 +289,8 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
             </div>
           </div>
 
-          {/* Metrics */}
           <div className="grid grid-cols-4 gap-3">
-            <MetricCard label="Market Cap" value={`$${fmtLarge((data.profile.marketCapitalization || 0) * 1e6)}`} />
+            <MetricCard label="Market Cap" value={'$' + fmtLarge((data.profile.marketCapitalization || 0) * 1e6)} />
             <MetricCard label="P/E Ratio" value={pe != null ? fmt(pe, 1) : '—'} />
             <MetricCard label="EPS (Annual)" value={eps != null ? '$' + fmt(eps, 2) : '—'} />
             <MetricCard label="Net Margin" value={margin != null ? fmt(margin, 1) + '%' : '—'} />
@@ -367,23 +300,18 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
             <MetricCard label="Beta" value={m.beta != null ? fmt(m.beta, 2) : '—'} />
           </div>
 
-          {/* Chart (full width with period buttons) */}
           <div className="panel p-4">
             <div className="flex items-center gap-2 mb-1">
               <TrendingUp size={14} className="text-electric-400" />
               <span className="font-display font-semibold text-[13px] text-slate-200">Price Chart</span>
-              {data.earnings?.length > 0 && (
-                <span className="ml-auto font-mono text-[10px] text-slate-600 uppercase tracking-wider">dashed lines = earnings dates</span>
-              )}
+              {data.earnings?.length > 0 && <span className="ml-auto font-mono text-[10px] text-slate-600 uppercase tracking-wider">dashed lines = earnings dates</span>}
             </div>
             <div className="h-72">
               <PriceChartWithPeriods chart={data.chart} earnings={data.earnings} />
             </div>
           </div>
 
-          {/* Analyst + Earnings + Revenue row */}
           <div className="grid grid-cols-3 gap-4">
-            {/* Analyst */}
             <div className="panel p-4">
               <div className="flex items-center gap-2 mb-4">
                 <Award size={14} className="text-electric-400" />
@@ -392,7 +320,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
               <AnalystBar analyst={data.analyst} />
             </div>
 
-            {/* EPS earnings history */}
             <div className="panel overflow-hidden">
               <div className="px-4 py-3 border-b border-white/5">
                 <span className="font-display font-semibold text-[13px] text-slate-200">EPS vs Estimate</span>
@@ -419,21 +346,11 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
               </div>
             </div>
 
-            {/* Revenue chart */}
             <div className="panel p-4">
               <div className="flex items-center gap-2 mb-3">
-              <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <BarChart2 size={14} className="text-electric-400" />
                 <span className="font-display font-semibold text-[13px] text-slate-200">Quarterly Revenue</span>
-                <div className="ml-auto flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
-              <span style={{width:10,height:10,borderRadius:2,background:'rgba(14,165,233,0.85)',display:'inline-block'}} /> Actual
-            </span>
-            <span className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
-              <span style={{width:10,height:10,borderRadius:2,background:'rgba(251,191,36,0.45)',display:'inline-block'}} /> Estimate
-            </span>
-            <span className="text-[9px] font-mono text-yellow-500/60 uppercase tracking-wider">yellow label = forecast</span>
-          </div>
+                <span className="ml-auto font-mono text-[10px] text-slate-600 uppercase tracking-wider">Last 4 qtrs</span>
               </div>
               <div className="h-48">
                 {revenueData
@@ -444,7 +361,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
             </div>
           </div>
 
-          {/* News */}
           <div className="panel overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
               <Newspaper size={13} className="text-electric-400" />
@@ -456,8 +372,13 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                 ? <div className="p-6 text-center text-slate-600 font-mono text-[11px] col-span-2">No news</div>
                 : data.news.map((n, i) => (
                   <div key={i} className="px-4 py-3 hover:bg-white/[0.02] transition-colors">
-                    <a href={n.url} target="_blank" rel="noopener noreferrer" className="text-[12px] text-slate-300 hover:text-electric-300 font-medium leading-snug block mb-1 transition-colors">{n.headline}</a>
-                    <div className="font-mono text-[10px] text-slate-600">{n.source} · {n.datetime ? new Date(n.datetime * 1000).toLocaleDateString() : ''}</div>
+                    <a href={n.url} target="_blank" rel="noopener noreferrer"
+                      className="text-[12px] text-slate-300 hover:text-electric-300 font-medium leading-snug block mb-1 transition-colors">
+                      {n.headline}
+                    </a>
+                    <div className="font-mono text-[10px] text-slate-600">
+                      {n.source} · {n.datetime ? new Date(n.datetime * 1000).toLocaleDateString() : ''}
+                    </div>
                   </div>
                 ))
               }
@@ -469,9 +390,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
   )
 }
 
-// =====================================================
-// COMPARE VIEW
-// =====================================================
 function CompareView({ portfolio, watchlist }) {
   const [tickerA, setTickerA] = useState('')
   const [tickerB, setTickerB] = useState('')
@@ -516,7 +434,8 @@ function CompareView({ portfolio, watchlist }) {
               className="w-24 bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[12px] font-mono text-slate-300 placeholder-slate-600 focus:outline-none focus:border-electric-500/40 uppercase" />
           </div>
         ))}
-        <button onClick={run} disabled={loading || !tickerA || !tickerB} className="btn-primary px-5 py-2.5 rounded font-mono text-[12px] uppercase tracking-wider font-semibold disabled:opacity-40">
+        <button onClick={run} disabled={loading || !tickerA || !tickerB}
+          className="btn-primary px-5 py-2.5 rounded font-mono text-[12px] uppercase tracking-wider font-semibold disabled:opacity-40">
           {loading ? 'Loading…' : 'Compare'}
         </button>
       </div>
@@ -526,7 +445,13 @@ function CompareView({ portfolio, watchlist }) {
       {data && !loading && (
         <div className="panel overflow-hidden animate-slide-up">
           <table className="data-table">
-            <thead><tr><th className="w-1/3">Metric</th><th className="text-right">{data.a.ticker} · {data.a.profile?.name || ''}</th><th className="text-right">{data.b.ticker} · {data.b.profile?.name || ''}</th></tr></thead>
+            <thead>
+              <tr>
+                <th className="w-1/3">Metric</th>
+                <th className="text-right">{data.a.ticker} · {data.a.profile?.name || ''}</th>
+                <th className="text-right">{data.b.ticker} · {data.b.profile?.name || ''}</th>
+              </tr>
+            </thead>
             <tbody>
               {METRICS.map(m => {
                 const va = m.fmt(m.a), vb = m.fmt(m.b)
@@ -535,29 +460,33 @@ function CompareView({ portfolio, watchlist }) {
                   if ((m.higher && m.a > m.b) || (!m.higher && m.a < m.b)) { clsA = 'font-mono text-[12px] font-bold positive'; clsB = 'font-mono text-[12px] text-slate-500' }
                   else if ((m.higher && m.b > m.a) || (!m.higher && m.b < m.a)) { clsB = 'font-mono text-[12px] font-bold positive'; clsA = 'font-mono text-[12px] text-slate-500' }
                 }
-                return <tr key={m.label}><td className="text-[11px] font-mono uppercase tracking-wider text-slate-500">{m.label}</td><td className={`text-right ${clsA}`}>{va}</td><td className={`text-right ${clsB}`}>{vb}</td></tr>
+                return (
+                  <tr key={m.label}>
+                    <td className="text-[11px] font-mono uppercase tracking-wider text-slate-500">{m.label}</td>
+                    <td className={'text-right ' + clsA}>{va}</td>
+                    <td className={'text-right ' + clsB}>{vb}</td>
+                  </tr>
+                )
               })}
             </tbody>
           </table>
-          <div className="px-4 py-2 text-[10px] font-mono text-slate-600 border-t border-white/5">Green = better · Lower P/E and Beta = better · Higher for everything else</div>
+          <div className="px-4 py-2 text-[10px] font-mono text-slate-600 border-t border-white/5">
+            Green = better · Lower P/E and Beta = better · Higher for everything else
+          </div>
         </div>
       )}
     </div>
   )
 }
 
-// =====================================================
-// EXPORT
-// =====================================================
 export default function WorkstationTab({ portfolio, watchlist, initialTicker }) {
   const [sub, setSub] = useState('analyze')
-
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="flex gap-2">
         {[['analyze', '🔍 Analyze'], ['compare', '⚖️ Compare']].map(([id, label]) => (
           <button key={id} onClick={() => setSub(id)}
-            className={`px-4 py-2 rounded text-[12px] font-mono uppercase tracking-wider border transition-all ${sub === id ? 'bg-electric-500 text-navy-950 border-electric-500 font-semibold' : 'border-white/10 text-slate-500 hover:text-slate-300 hover:border-white/20'}`}>
+            className={'px-4 py-2 rounded text-[12px] font-mono uppercase tracking-wider border transition-all ' + (sub === id ? 'bg-electric-500 text-navy-950 border-electric-500 font-semibold' : 'border-white/10 text-slate-500 hover:text-slate-300 hover:border-white/20')}>
             {label}
           </button>
         ))}
