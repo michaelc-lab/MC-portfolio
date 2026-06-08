@@ -157,7 +157,7 @@ const RevTooltip = ({ active, payload, label, quarters }) => {
       <div className="text-slate-300 font-semibold mb-1">{label} {quarter?.isForward ? '(forecast)' : '(reported)'}</div>
       {payload.map(p => p.value != null && (
         <div key={p.dataKey} style={{ color: p.dataKey === 'actual' ? '#38bdf8' : '#fbbf24' }}>
-          {p.dataKey === 'actual' ? '● Actual: ' : '○ Estimate: '}${fmtLarge(p.value)}
+          {p.dataKey === 'actual' ? '● Actual: ' : '○ Estimate: '}{'$'}{fmtLarge(p.value)}
         </div>
       ))}
     </div>
