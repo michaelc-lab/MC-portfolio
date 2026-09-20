@@ -63,7 +63,7 @@ export default function App() {
         {/* Content */}
         {data && !loading && (
           <>
-            {tab === 'lead'        && <LeadTab portfolio={portfolio} indexes={indexes} />}
+            {tab === 'lead'        && <LeadTab portfolio={portfolio} />}
             {tab === 'portfolio'   && <StockTable rows={portfolio} isWatchlist={false} onAnalyze={handleAnalyze} />}
             {tab === 'watchlist'   && <StockTable rows={watchlist}  isWatchlist={true}  onAnalyze={handleAnalyze} />}
             {tab === 'workstation' && <WorkstationTab portfolio={portfolio} watchlist={watchlist} initialTicker={wsAnalyzeTicker} />}
