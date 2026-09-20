@@ -80,45 +80,6 @@ function KpiCard({ label, value, sub, color = 'accent', icon: Icon }) {
   )
 }
 
-// ── Indexes row ───────────────────────────────────────────────
-function IndexesRow({ indexes }) {
-  const items = [
-    { key: 'SPY',  label: 'S&P 500 (SPY)'  },
-    { key: 'QQQ',  label: 'Nasdaq (QQQ)'   },
-    { key: 'SOXX', label: 'Semis (SOXX)'   },
-    { key: 'VIX',  label: 'VIX'            },
-  ]
-  return (
-    <div className="panel p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Activity size={14} className="text-electric-400" />
-        <span className="font-display font-semibold text-[13px] text-slate-200">Market Indexes</span>
-        <MarketStatus />
-      </div>
-      <div className="grid grid-cols-4 gap-3">
-        {items.map(({ key, label }) => {
-          const price  = indexes?.[key]
-          const change = indexes?.[key + '_change']
-          const isPos  = change > 0
-          const isNeg  = change < 0
-          return (
-            <div key={key} className="bg-navy-800/40 border border-white/8 rounded-lg p-3 hover:border-electric-500/20 transition-colors">
-              <div className="text-[9px] font-mono uppercase tracking-[0.2em] text-slate-600 mb-1">{label}</div>
-              <div className="font-mono font-bold text-[16px] text-slate-100">
-                {price != null ? fmtPrice(price) : '—'}
-              </div>
-              {change != null && (
-                <div className={`font-mono text-[11px] mt-0.5 ${isPos ? 'positive' : isNeg ? 'negative' : 'neutral'}`}>
-                  {fmtPct(change)}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
 
 // ── Mover tables ──────────────────────────────────────────────
 function MoverRow({ r, useWeek }) {
@@ -269,8 +230,61 @@ function UpcomingEarnings() {
   )
 }
 
+
+// ── Sector Pulse ──────────────────────────────────────────────
+function SectorPulse({ portfolio }) {
+  // Group by sector, compute average daily change per sector
+  const sectorMap = {}
+  portfolio.forEach(r => {
+    if (!r.sector || r.dayChangePct == null) return
+    if (!sectorMap[r.sector]) sectorMap[r.sector] = { sum: 0, count: 0 }
+    sectorMap[r.sector].sum += r.dayChangePct
+    sectorMap[r.sector].count += 1
+  })
+
+  const sectors = Object.entries(sectorMap)
+    .map(([name, { sum, count }]) => ({ name, avg: sum / count }))
+    .sort((a, b) => b.avg - a.avg)
+
+  const best  = sectors[0]
+  const worst = sectors[sectors.length - 1]
+
+  return (
+    <div className="panel p-5 relative overflow-hidden group hover:border-electric-500/25 transition-all">
+      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-electric-500/30 to-transparent" />
+      <div className="flex items-start justify-between mb-3">
+        <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">Sector Pulse</span>
+        <TrendingUp size={14} className="text-slate-600" />
+      </div>
+      {best && (
+        <div className="space-y-2">
+          {/* Best sector */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-mono text-[9px] uppercase tracking-wider text-slate-600 mb-0.5">Leading</div>
+              <div className="font-display font-bold text-[15px] text-white leading-tight">{best.name}</div>
+            </div>
+            <div className="font-mono font-bold text-[22px] text-terminal-green">{fmtPct(best.avg)}</div>
+          </div>
+          <div className="h-px bg-white/5" />
+          {/* Worst sector */}
+          {worst && worst.name !== best.name && (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-mono text-[9px] uppercase tracking-wider text-slate-600 mb-0.5">Lagging</div>
+                <div className="font-display font-semibold text-[13px] text-slate-400 leading-tight">{worst.name}</div>
+              </div>
+              <div className="font-mono font-semibold text-[16px] text-terminal-red">{fmtPct(worst.avg)}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main export ───────────────────────────────────────────────
-export default function LeadTab({ portfolio, indexes }) {
+export default function LeadTab({ portfolio }) {
   const withDay    = portfolio.filter(r => r.dayChangePct != null)
   const withWeek   = portfolio.filter(r => r.weekChangePct != null)
   const atATH      = portfolio.filter(r => r.atATH)
@@ -283,13 +297,11 @@ export default function LeadTab({ portfolio, indexes }) {
     <div className="space-y-5 animate-fade-in">
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-4">
-        <KpiCard label="Holdings"      value={portfolio.length} sub={`${portfolio.filter(r => r.price != null).length} priced`} color="accent" icon={Activity} />
+        <SectorPulse portfolio={portfolio} />
         <KpiCard label="At ATH"        value={atATH.length}     sub="within 0.5% of high" color="green" icon={Zap} />
         <KpiCard label="Deep Discount" value={deepDisc.length}  sub=">50% off ATH"        color="red"   icon={AlertTriangle} />
       </div>
 
-      {/* Indexes */}
-      <IndexesRow indexes={indexes} />
 
       {/* Daily movers */}
       <div className="grid grid-cols-2 gap-4">
