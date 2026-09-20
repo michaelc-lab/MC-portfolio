@@ -1,6 +1,6 @@
 # MC Portfolio Dashboard
 
-Premium React portfolio dashboard powered by Google Sheets + Finnhub + gold-api.com.
+ Premium React portfolio dashboard powered by Google Sheets + Finnhub + gold-api.com.
 
 ## Stack
 - React 18 + Vite
