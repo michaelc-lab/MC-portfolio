@@ -351,29 +351,36 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
         </div>
       ) : (
         <div className="panel overflow-auto">
-          <table className="data-table" style={{tableLayout:'fixed', width:'100%'}}>
+          <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%', borderCollapse:'collapse', tableLayout:'fixed'}}>
             <colgroup>
+              <col style={{width:'120px'}} />
+              <col style={{width:'60px'}} />
               <col style={{width:'110px'}} />
-              <col style={{width:'70px'}} />
-              <col style={{width:'120px'}} />
-              <col style={{width:'120px'}} />
-              <col style={{width:'140px'}} />
-              <col style={{width:'120px'}} />
-              <col style={{width:'100px'}} />
-              <col style={{width:'100px'}} />
+              <col style={{width:'110px'}} />
+              <col style={{width:'130px'}} />
+              <col style={{width:'110px'}} />
+              <col style={{width:'90px'}} />
+              <col style={{width:'90px'}} />
               <col style={{width:'110px'}} />
             </colgroup>
             <thead>
               <tr>
-                <th>Ticker</th>
-                <th className="text-right">Qty</th>
-                <th className="text-right">Avg Buy</th>
-                <th className="text-right">Current</th>
-                <th className="text-right">Position Value</th>
-                <th className="text-right">P&L ($)</th>
-                <th className="text-right">P&L (%)</th>
-                <th className="text-right">Day Chg</th>
-                <th></th>
+                {['Ticker','Qty','Avg Buy','Current','Position Value','P&L ($)','P&L (%)','Day Chg',''].map((h,i) => (
+                  <th key={i} style={{
+                    textAlign: i === 0 ? 'left' : 'right',
+                    padding: '10px 12px',
+                    fontFamily: 'IBM Plex Mono, monospace',
+                    fontSize: '10px',
+                    letterSpacing: '0.15em',
+                    textTransform: 'uppercase',
+                    color: '#334155',
+                    borderBottom: '1px solid rgba(14,165,233,0.08)',
+                    background: '#060d1f',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                  }}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -385,99 +392,69 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
                 const cost = p.buyPrice * p.qty
                 const pnlAbs = value != null ? value - cost : null
                 const pnlPct = pnlAbs != null ? (pnlAbs / cost) * 100 : null
-
+                const td = (content, align='right', extra={}) => (
+                  <td style={{padding:'11px 12px', borderBottom:'1px solid rgba(14,165,233,0.04)', fontFamily:'IBM Plex Mono,monospace', fontSize:'12px', textAlign:align, overflow:'hidden', ...extra}}>
+                    {content}
+                  </td>
+                )
                 return (
-                  <tr key={p.ticker} className="group">
-                    <td>
-                      <span className="font-mono font-bold text-[13px] text-electric-300">{p.ticker}</span>
-                    </td>
-                    <td className="text-right">
-                      <span className="font-mono text-[12px] text-slate-300">{p.qty}</span>
-                    </td>
-                    <td className="text-right">
-                      <span className="font-mono text-[12px] text-slate-400">{fmtPrice(p.buyPrice)}</span>
-                    </td>
-                    <td className="text-right">
-                      {isLoading
-                        ? <span className="text-slate-600 text-[11px] animate-pulse">loading…</span>
-                        : currentPrice != null
-                          ? <span className="font-mono font-semibold text-[13px] text-slate-100">{fmtPrice(currentPrice)}</span>
-                          : <span className="text-slate-600">—</span>
-                      }
-                    </td>
-                    <td className="text-right">
-                      {value != null
-                        ? <span className="font-mono text-[13px] font-semibold text-slate-100">{fmtPrice(value)}</span>
-                        : <span className="text-slate-600">—</span>
-                      }
-                    </td>
-                    <td className="text-right">
-                      {pnlAbs != null
-                        ? <span className={`font-mono text-[13px] font-bold ${pnlAbs >= 0 ? 'positive' : 'negative'}`}>
-                            {pnlAbs >= 0 ? '+' : '−'}${fmtLarge(Math.abs(pnlAbs))}
-                          </span>
-                        : <span className="text-slate-600">—</span>
-                      }
-                    </td>
-                    <td className="text-right">
-                      {pnlPct != null
-                        ? <span className={`font-mono text-[13px] font-bold ${pnlPct >= 0 ? 'positive' : 'negative'}`}>
-                            {fmtPct(pnlPct)}
-                          </span>
-                        : <span className="text-slate-600">—</span>
-                      }
-                    </td>
-                    <td className="text-right">
-                      {q?.dayChangePct != null
-                        ? <span className={`font-mono text-[12px] ${q.dayChangePct > 0 ? 'positive' : q.dayChangePct < 0 ? 'negative' : 'neutral'}`}>
-                            {fmtPct(q.dayChangePct)}
-                          </span>
-                        : <span className="text-slate-600">—</span>
-                      }
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <tr key={p.ticker} className="group" style={{cursor:'default'}}>
+                    {td(<span style={{fontWeight:'700',fontSize:'13px',color:'#7dd3fc'}}>{p.ticker}</span>, 'left')}
+                    {td(<span style={{color:'#cbd5e1'}}>{p.qty}</span>)}
+                    {td(<span style={{color:'#94a3b8'}}>{fmtPrice(p.buyPrice)}</span>)}
+                    {td(isLoading
+                      ? <span style={{color:'#475569',fontSize:'11px'}}>loading…</span>
+                      : currentPrice != null
+                        ? <span style={{fontWeight:'600',color:'#f1f5f9'}}>{fmtPrice(currentPrice)}</span>
+                        : <span style={{color:'#475569'}}>—</span>
+                    )}
+                    {td(value != null
+                      ? <span style={{fontWeight:'600',color:'#f1f5f9'}}>{fmtPrice(value)}</span>
+                      : <span style={{color:'#475569'}}>—</span>
+                    )}
+                    {td(pnlAbs != null
+                      ? <span style={{fontWeight:'700',color:pnlAbs>=0?'#00ff88':'#ff4466'}}>{pnlAbs>=0?'+':'−'}${fmtLarge(Math.abs(pnlAbs))}</span>
+                      : <span style={{color:'#475569'}}>—</span>
+                    )}
+                    {td(pnlPct != null
+                      ? <span style={{fontWeight:'700',color:pnlPct>=0?'#00ff88':'#ff4466'}}>{fmtPct(pnlPct)}</span>
+                      : <span style={{color:'#475569'}}>—</span>
+                    )}
+                    {td(q?.dayChangePct != null
+                      ? <span style={{color:q.dayChangePct>0?'#00ff88':q.dayChangePct<0?'#ff4466':'#64748b'}}>{fmtPct(q.dayChangePct)}</span>
+                      : <span style={{color:'#475569'}}>—</span>
+                    )}
+                    {td(
+                      <div style={{display:'flex',gap:'6px',opacity:0}} className="group-hover:opacity-100" onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0}>
                         {onAnalyze && (
-                          <button onClick={() => onAnalyze(p.ticker)}
-                            className="text-[10px] font-mono text-electric-400 hover:text-electric-300 border border-electric-500/20 hover:border-electric-500/40 px-2 py-0.5 rounded transition-all">
+                          <button onClick={() => onAnalyze(p.ticker)} style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#38bdf8',border:'1px solid rgba(14,165,233,0.2)',padding:'2px 8px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>
                             Analyze →
                           </button>
                         )}
-                        <button onClick={() => onRemove(p.ticker)} className="text-slate-600 hover:text-terminal-red transition-colors">
+                        <button onClick={() => onRemove(p.ticker)} style={{color:'#475569',background:'transparent',border:'none',cursor:'pointer',display:'flex',alignItems:'center'}}>
                           <X size={13} />
                         </button>
                       </div>
-                    </td>
+                    )}
                   </tr>
                 )
               })}
-
-              {/* Totals row */}
               {totals.value > 0 && (
-                <tr className="border-t-2 border-electric-500/20 bg-electric-500/[0.03]">
-                  <td colSpan={4} className="font-mono text-[11px] uppercase tracking-wider text-slate-500 py-3 pl-3">
-                    Portfolio Total
+                <tr style={{borderTop:'2px solid rgba(14,165,233,0.2)',background:'rgba(14,165,233,0.03)'}}>
+                  <td colSpan={4} style={{padding:'12px',fontFamily:'IBM Plex Mono,monospace',fontSize:'11px',textTransform:'uppercase',letterSpacing:'0.1em',color:'#475569'}}>Portfolio Total</td>
+                  <td style={{padding:'12px',textAlign:'right',fontFamily:'IBM Plex Mono,monospace',fontWeight:'700',fontSize:'14px',color:'#f1f5f9'}}>{fmtPrice(totals.value)}</td>
+                  <td style={{padding:'12px',textAlign:'right',fontFamily:'IBM Plex Mono,monospace',fontWeight:'700',fontSize:'14px',color:totals.pnl>=0?'#00ff88':'#ff4466'}}>
+                    {totals.pnl>=0?'+':'−'}${fmtLarge(Math.abs(totals.pnl))}
                   </td>
-                  <td className="text-right font-mono font-bold text-[14px] text-slate-100 py-3">
-                    {fmtPrice(totals.value)}
-                  </td>
-                  <td className="text-right font-mono font-bold text-[14px] py-3">
-                    <span className={totals.pnl >= 0 ? 'positive' : 'negative'}>
-                      {totals.pnl >= 0 ? '+' : '−'}${fmtLarge(Math.abs(totals.pnl))}
-                    </span>
-                  </td>
-                  <td className="text-right font-mono font-bold text-[14px] py-3">
-                    {totalPnlPct != null &&
-                      <span className={totalPnlPct >= 0 ? 'positive' : 'negative'}>
-                        {fmtPct(totalPnlPct)}
-                      </span>
-                    }
+                  <td style={{padding:'12px',textAlign:'right',fontFamily:'IBM Plex Mono,monospace',fontWeight:'700',fontSize:'14px',color:totalPnlPct!=null&&totalPnlPct>=0?'#00ff88':'#ff4466'}}>
+                    {totalPnlPct != null ? fmtPct(totalPnlPct) : '—'}
                   </td>
                   <td colSpan={2}></td>
                 </tr>
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
