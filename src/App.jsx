@@ -4,12 +4,14 @@ import Header from './components/Header'
 import LeadTab from './components/LeadTab'
 import StockTable from './components/StockTable'
 import WorkstationTab from './components/WorkstationTab'
+import CustomPortfolios from './components/CustomPortfolios'
 
 const TABS = [
   { id: 'lead',        label: 'Lead'        },
   { id: 'portfolio',   label: 'Portfolio'   },
   { id: 'watchlist',   label: 'Watchlist'   },
   { id: 'workstation', label: 'Workstation' },
+  { id: 'myportfolios', label: 'My Portfolios' },
 ]
 
 export default function App() {
@@ -67,6 +69,7 @@ export default function App() {
             {tab === 'portfolio'   && <StockTable rows={portfolio} isWatchlist={false} onAnalyze={handleAnalyze} />}
             {tab === 'watchlist'   && <StockTable rows={watchlist}  isWatchlist={true}  onAnalyze={handleAnalyze} />}
             {tab === 'workstation' && <WorkstationTab portfolio={portfolio} watchlist={watchlist} initialTicker={wsAnalyzeTicker} />}
+            {tab === 'myportfolios' && <CustomPortfolios onAnalyze={handleAnalyze} />}
           </>
         )}
       </main>
