@@ -351,18 +351,29 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
         </div>
       ) : (
         <div className="panel overflow-auto">
-          <table className="data-table">
+          <table className="data-table" style={{tableLayout:'fixed', width:'100%'}}>
+            <colgroup>
+              <col style={{width:'110px'}} />
+              <col style={{width:'70px'}} />
+              <col style={{width:'120px'}} />
+              <col style={{width:'120px'}} />
+              <col style={{width:'140px'}} />
+              <col style={{width:'120px'}} />
+              <col style={{width:'100px'}} />
+              <col style={{width:'100px'}} />
+              <col style={{width:'110px'}} />
+            </colgroup>
             <thead>
               <tr>
-                <th style={{width:'100px'}}>Ticker</th>
-                <th className="text-right" style={{width:'70px'}}>Qty</th>
-                <th className="text-right" style={{width:'110px'}}>Avg Buy</th>
-                <th className="text-right" style={{width:'110px'}}>Current</th>
-                <th className="text-right" style={{width:'120px'}}>Position Value</th>
-                <th className="text-right" style={{width:'110px'}}>P&L ($)</th>
-                <th className="text-right" style={{width:'90px'}}>P&L (%)</th>
-                <th className="text-right" style={{width:'90px'}}>Day Chg</th>
-                <th style={{width:'100px'}}></th>
+                <th>Ticker</th>
+                <th className="text-right">Qty</th>
+                <th className="text-right">Avg Buy</th>
+                <th className="text-right">Current</th>
+                <th className="text-right">Position Value</th>
+                <th className="text-right">P&L ($)</th>
+                <th className="text-right">P&L (%)</th>
+                <th className="text-right">Day Chg</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
