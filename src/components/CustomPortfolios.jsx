@@ -337,17 +337,11 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
   return (
     <div className="space-y-3">
       {/* Add position button */}
-      <div className="flex justify-between items-center">
+      <div className="flex items-center">
         <button onClick={() => setShowAddModal(true)}
           className="btn-primary px-4 py-2 rounded text-[11px] font-mono font-semibold uppercase tracking-wider flex items-center gap-1.5">
           <Plus size={12} /> Add Position
         </button>
-        {totals.value > 0 && (
-          <div className="flex items-center gap-4 font-mono text-[12px]">
-            <span className="text-slate-500">Total Value: <span className="text-slate-200 font-semibold">{fmtPrice(totals.value)}</span></span>
-            <span className="text-slate-500">P&L: <span className={`font-semibold ${totals.pnl >= 0 ? 'positive' : 'negative'}`}>{totals.pnl >= 0 ? '+' : ''}${fmtLarge(Math.abs(totals.pnl))} ({totalPnlPct != null ? fmtPct(totalPnlPct) : '—'})</span></span>
-          </div>
-        )}
       </div>
 
       {positions.length === 0 ? (
@@ -360,15 +354,15 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Ticker</th>
-                <th className="text-right">Qty</th>
-                <th className="text-right">Avg Buy</th>
-                <th className="text-right">Current</th>
-                <th className="text-right">Value</th>
-                <th className="text-right">P&L $</th>
-                <th className="text-right">P&L %</th>
-                <th className="text-right">Δ Today</th>
-                <th></th>
+                <th style={{width:'100px'}}>Ticker</th>
+                <th className="text-right" style={{width:'70px'}}>Qty</th>
+                <th className="text-right" style={{width:'110px'}}>Avg Buy</th>
+                <th className="text-right" style={{width:'110px'}}>Current</th>
+                <th className="text-right" style={{width:'120px'}}>Position Value</th>
+                <th className="text-right" style={{width:'110px'}}>P&L ($)</th>
+                <th className="text-right" style={{width:'90px'}}>P&L (%)</th>
+                <th className="text-right" style={{width:'90px'}}>Day Chg</th>
+                <th style={{width:'100px'}}></th>
               </tr>
             </thead>
             <tbody>
@@ -383,31 +377,52 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
 
                 return (
                   <tr key={p.ticker} className="group">
-                    <td><span className="font-mono font-bold text-[13px] text-electric-300">{p.ticker}</span></td>
-                    <td className="text-right"><span className="font-mono text-[12px] text-slate-300">{p.qty}</span></td>
-                    <td className="text-right"><span className="font-mono text-[12px] text-slate-400">{fmtPrice(p.buyPrice)}</span></td>
-                    <td className="text-right">
-                      {isLoading ? <span className="text-slate-600 text-[11px] animate-pulse">…</span>
-                        : currentPrice != null ? <span className="font-mono font-semibold text-slate-200">{fmtPrice(currentPrice)}</span>
-                        : <span className="text-slate-600">—</span>}
+                    <td>
+                      <span className="font-mono font-bold text-[13px] text-electric-300">{p.ticker}</span>
                     </td>
                     <td className="text-right">
-                      {value != null ? <span className="font-mono text-[12px] text-slate-200">{fmtPrice(value)}</span> : <span className="text-slate-600">—</span>}
+                      <span className="font-mono text-[12px] text-slate-300">{p.qty}</span>
+                    </td>
+                    <td className="text-right">
+                      <span className="font-mono text-[12px] text-slate-400">{fmtPrice(p.buyPrice)}</span>
+                    </td>
+                    <td className="text-right">
+                      {isLoading
+                        ? <span className="text-slate-600 text-[11px] animate-pulse">loading…</span>
+                        : currentPrice != null
+                          ? <span className="font-mono font-semibold text-[13px] text-slate-100">{fmtPrice(currentPrice)}</span>
+                          : <span className="text-slate-600">—</span>
+                      }
+                    </td>
+                    <td className="text-right">
+                      {value != null
+                        ? <span className="font-mono text-[13px] font-semibold text-slate-100">{fmtPrice(value)}</span>
+                        : <span className="text-slate-600">—</span>
+                      }
                     </td>
                     <td className="text-right">
                       {pnlAbs != null
-                        ? <span className={`font-mono text-[12px] font-semibold ${pnlAbs >= 0 ? 'positive' : 'negative'}`}>{pnlAbs >= 0 ? '+' : '-'}${fmtLarge(Math.abs(pnlAbs))}</span>
-                        : <span className="text-slate-600">—</span>}
+                        ? <span className={`font-mono text-[13px] font-bold ${pnlAbs >= 0 ? 'positive' : 'negative'}`}>
+                            {pnlAbs >= 0 ? '+' : '−'}${fmtLarge(Math.abs(pnlAbs))}
+                          </span>
+                        : <span className="text-slate-600">—</span>
+                      }
                     </td>
                     <td className="text-right">
                       {pnlPct != null
-                        ? <span className={`font-mono text-[12px] font-semibold ${pnlPct >= 0 ? 'positive' : 'negative'}`}>{fmtPct(pnlPct)}</span>
-                        : <span className="text-slate-600">—</span>}
+                        ? <span className={`font-mono text-[13px] font-bold ${pnlPct >= 0 ? 'positive' : 'negative'}`}>
+                            {fmtPct(pnlPct)}
+                          </span>
+                        : <span className="text-slate-600">—</span>
+                      }
                     </td>
                     <td className="text-right">
                       {q?.dayChangePct != null
-                        ? <span className={`font-mono text-[12px] ${q.dayChangePct > 0 ? 'positive' : q.dayChangePct < 0 ? 'negative' : 'neutral'}`}>{fmtPct(q.dayChangePct)}</span>
-                        : <span className="text-slate-600">—</span>}
+                        ? <span className={`font-mono text-[12px] ${q.dayChangePct > 0 ? 'positive' : q.dayChangePct < 0 ? 'negative' : 'neutral'}`}>
+                            {fmtPct(q.dayChangePct)}
+                          </span>
+                        : <span className="text-slate-600">—</span>
+                      }
                     </td>
                     <td>
                       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -428,16 +443,24 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
 
               {/* Totals row */}
               {totals.value > 0 && (
-                <tr className="border-t border-electric-500/20">
-                  <td colSpan={4} className="font-mono text-[11px] uppercase tracking-wider text-slate-500 pt-3">Portfolio Total</td>
-                  <td className="text-right font-mono font-bold text-slate-200">{fmtPrice(totals.value)}</td>
-                  <td className="text-right font-mono font-bold">
+                <tr className="border-t-2 border-electric-500/20 bg-electric-500/[0.03]">
+                  <td colSpan={4} className="font-mono text-[11px] uppercase tracking-wider text-slate-500 py-3 pl-3">
+                    Portfolio Total
+                  </td>
+                  <td className="text-right font-mono font-bold text-[14px] text-slate-100 py-3">
+                    {fmtPrice(totals.value)}
+                  </td>
+                  <td className="text-right font-mono font-bold text-[14px] py-3">
                     <span className={totals.pnl >= 0 ? 'positive' : 'negative'}>
-                      {totals.pnl >= 0 ? '+' : '-'}${fmtLarge(Math.abs(totals.pnl))}
+                      {totals.pnl >= 0 ? '+' : '−'}${fmtLarge(Math.abs(totals.pnl))}
                     </span>
                   </td>
-                  <td className="text-right font-mono font-bold">
-                    {totalPnlPct != null && <span className={totalPnlPct >= 0 ? 'positive' : 'negative'}>{fmtPct(totalPnlPct)}</span>}
+                  <td className="text-right font-mono font-bold text-[14px] py-3">
+                    {totalPnlPct != null &&
+                      <span className={totalPnlPct >= 0 ? 'positive' : 'negative'}>
+                        {fmtPct(totalPnlPct)}
+                      </span>
+                    }
                   </td>
                   <td colSpan={2}></td>
                 </tr>
