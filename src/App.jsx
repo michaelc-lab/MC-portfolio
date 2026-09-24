@@ -16,6 +16,87 @@ const TABS = [
   { id: 'myportfolios',label: 'My Portfolios'},
 ]
 
+
+function SplashScreen() {
+  const [dot, setDot] = React.useState(0)
+  React.useEffect(() => {
+    const id = setInterval(() => setDot(d => (d + 1) % 4), 400)
+    return () => clearInterval(id)
+  }, [])
+  const dots = '.'.repeat(dot)
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'linear-gradient(135deg, #020817 0%, #060d1f 50%, #0a1628 100%)',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: 32,
+    }}>
+      {/* Animated logo */}
+      <div style={{ position: 'relative' }}>
+        <div style={{
+          width: 80, height: 80, borderRadius: '50%',
+          border: '2px solid rgba(14,165,233,0.3)',
+          background: 'rgba(14,165,233,0.08)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 0 40px rgba(14,165,233,0.2)',
+          animation: 'splashGlow 2s ease-in-out infinite',
+        }}>
+          <span style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 28, color: '#38bdf8' }}>MC</span>
+        </div>
+        {/* Spinning ring */}
+        <div style={{
+          position: 'absolute', inset: -6,
+          borderRadius: '50%',
+          border: '2px solid transparent',
+          borderTopColor: '#0ea5e9',
+          borderRightColor: 'rgba(14,165,233,0.3)',
+          animation: 'spin 1.2s linear infinite',
+        }} />
+      </div>
+
+      {/* Title */}
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 28, color: 'white', letterSpacing: '-0.5px' }}>
+          MC <span style={{ color: '#38bdf8', fontWeight: 300, fontStyle: 'italic' }}>Portfolio</span>
+        </div>
+        <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 10, color: '#334155', letterSpacing: '0.3em', textTransform: 'uppercase', marginTop: 6 }}>
+          Live · Multi-Sector · Real-Time
+        </div>
+      </div>
+
+      {/* Loading bar */}
+      <div style={{ width: 200, height: 2, background: 'rgba(14,165,233,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', borderRadius: 2,
+          background: 'linear-gradient(90deg, #0ea5e9, #38bdf8)',
+          animation: 'loadBar 1.5s ease-in-out infinite',
+        }} />
+      </div>
+
+      {/* Status text */}
+      <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#475569', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+        Loading market data{dots}
+      </div>
+
+      <style>{`
+        @keyframes splashGlow {
+          0%, 100% { box-shadow: 0 0 20px rgba(14,165,233,0.2); }
+          50% { box-shadow: 0 0 50px rgba(14,165,233,0.5), 0 0 80px rgba(14,165,233,0.2); }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes loadBar {
+          0% { width: 0%; margin-left: 0; }
+          50% { width: 60%; margin-left: 20%; }
+          100% { width: 0%; margin-left: 100%; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
 function LoadingSkeleton({ isMobile }) {
   return (
     <div className="space-y-4 animate-fade-in">
@@ -61,9 +142,8 @@ export default function App() {
           ))}
         </div>
 
-        {/* Loading skeleton — show immediately on first load */}
-        {loading && !data && <LoadingSkeleton isMobile={isMobile} />}
-        {!loading && !data && !error && <LoadingSkeleton isMobile={isMobile} />}
+        {/* Splash screen on first load */}
+        {!data && !error && <SplashScreen />}
 
         {/* Error */}
         {error && !loading && (
