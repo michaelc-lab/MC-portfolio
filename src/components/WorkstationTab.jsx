@@ -4,6 +4,130 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
 import { fetchWorkstationData, fetchCompareData } from '../hooks/usePortfolioData'
 
+
+// ── InfoTip Component ─────────────────────────────────────────
+function InfoTip({ text, children }) {
+  const [show, setShow] = React.useState(false)
+  const [pos, setPos] = React.useState({ top: 0, left: 0 })
+  const ref = React.useRef(null)
+
+  const handleMouseEnter = () => {
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect()
+      setPos({
+        top: rect.bottom + window.scrollY + 6,
+        left: Math.min(rect.left + window.scrollX, window.innerWidth - 280),
+      })
+    }
+    setShow(true)
+  }
+
+  return (
+    <span ref={ref} className="relative inline-flex items-center"
+      onMouseEnter={handleMouseEnter} onMouseLeave={() => setShow(false)}>
+      {children}
+      <span className="ml-1 text-slate-600 hover:text-slate-400 cursor-help text-[10px]">ⓘ</span>
+      {show && (
+        <div style={{
+          position: 'fixed',
+          top: pos.top,
+          left: pos.left,
+          zIndex: 9999,
+          width: 260,
+          background: '#0a1628',
+          border: '1px solid rgba(14,165,233,0.3)',
+          borderRadius: 8,
+          padding: '10px 12px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          pointerEvents: 'none',
+        }}>
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}
+            dangerouslySetInnerHTML={{ __html: text }} />
+        </div>
+      )}
+    </span>
+  )
+}
+
+const TOOLTIPS = {
+  sharpe: `<b>Sharpe Ratio</b> — risk-adjusted return.<br/>
+    🟢 &gt;1.0 = Good<br/>
+    🟡 0–1.0 = Acceptable<br/>
+    🔴 &lt;0 = Losing money per unit of risk<br/><br/>
+    <i>Higher = better return for the risk taken</i>`,
+
+  sortino: `<b>Sortino Ratio</b> — like Sharpe but only counts downside volatility.<br/>
+    🟢 &gt;1.0 = Good<br/>
+    🟡 0–1.0 = Acceptable<br/>
+    🔴 &lt;0 = Poor<br/><br/>
+    <i>Better than Sharpe for growth stocks with occasional big up-days</i>`,
+
+  volatility: `<b>Annualized Volatility</b> — how much the stock swings per year.<br/>
+    🟢 &lt;20% = Low (stable)<br/>
+    🟡 20–35% = Medium<br/>
+    🔴 &gt;35% = High (volatile)<br/><br/>
+    <i>S&amp;P 500 avg is ~15%. Individual stocks typically 25–50%</i>`,
+
+  maxDrawdown: `<b>Max Drawdown</b> — worst peak-to-trough drop in the period.<br/>
+    🟢 &gt;-15% = Mild<br/>
+    🟡 -15% to -30% = Moderate<br/>
+    🔴 &lt;-30% = Severe<br/><br/>
+    <i>Key for position sizing — can you stomach this drop?</i>`,
+
+  grossMargin: `<b>Gross Margin</b> — revenue minus cost of goods sold.<br/>
+    🟢 &gt;50% = Excellent (software, pharma)<br/>
+    🟡 30–50% = Good<br/>
+    🔴 &lt;20% = Low (retail, hardware)<br/><br/>
+    <i>Arrow shows trend vs 3-year average</i>`,
+
+  ebitMargin: `<b>EBIT Margin</b> — operating profit as % of revenue.<br/>
+    🟢 &gt;25% = Excellent<br/>
+    🟡 10–25% = Good<br/>
+    🔴 &lt;10% = Thin<br/><br/>
+    <i>Strips out interest &amp; taxes — pure operating efficiency</i>`,
+
+  netMargin: `<b>Net Margin</b> — bottom-line profit as % of revenue.<br/>
+    🟢 &gt;20% = Excellent<br/>
+    🟡 5–20% = Good<br/>
+    🔴 &lt;5% = Thin<br/><br/>
+    <i>After all costs including taxes &amp; interest</i>`,
+
+  revenueGrowth: `<b>Revenue CAGR</b> — compound annual growth rate over 3 or 5 years.<br/>
+    🟢 &gt;15% = High growth<br/>
+    🟡 5–15% = Moderate<br/>
+    🔴 &lt;5% = Slow<br/><br/>
+    <i>Consistency matters more than a single big year</i>`,
+
+  earningsGrowth: `<b>Earnings CAGR</b> — net income compound growth rate.<br/>
+    🟢 &gt;15% = Strong<br/>
+    🟡 5–15% = Decent<br/>
+    🔴 Negative = Declining profits<br/><br/>
+    <i>Should grow faster than revenue for margin expansion</i>`,
+
+  fairValue: `<b>Fair Value</b> — computed by Eulerpool using two models:<br/>
+    • <b>Income model</b>: DCF on projected net income<br/>
+    • <b>Revenue model</b>: P/S multiple vs peers<br/><br/>
+    <i>Use as a reference, not a precise target. ±20% is normal uncertainty</i>`,
+
+  earningsQuality: `<b>Earnings Quality Score (0–10)</b><br/>
+    Based on how consistently the company beats EPS estimates.<br/>
+    🟢 8–10 = Excellent (reliable beats)<br/>
+    🟡 5–7 = Average<br/>
+    🔴 0–4 = Poor (frequent misses)<br/><br/>
+    <i>A high score = management guides conservatively and executes well</i>`,
+
+  priceTarget: `<b>Analyst Price Targets</b> — aggregated from major brokerages via FMP.<br/>
+    • <b>Bull</b>: most optimistic analyst<br/>
+    • <b>Consensus</b>: average of all analysts<br/>
+    • <b>Bear</b>: most pessimistic analyst<br/><br/>
+    <i>Wide spread = high analyst disagreement = more uncertainty</i>`,
+
+  insiderActivity: `<b>Insider Activity</b> — executives buying/selling their own stock.<br/>
+    🟢 Open Mkt Buy = strong bullish signal<br/>
+    🔴 Open Mkt Sale = may be liquidity, not bearish<br/><br/>
+    <i>Buys are meaningful. Sales are often planned (diversification, taxes) — less significant unless large &amp; sudden</i>`,
+}
+
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwUQqqI6PAa64xq5ZALeJSUWuy86pVtSEG6rIMhgNOQ-7XS-t7PJRRncJ1mi7OAwd0/exec'
 
 function jsonp(url) {
@@ -450,7 +574,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
             <div className="panel p-4">
               <div className="flex items-center gap-2 mb-4">
                 <Star size={14} className="text-terminal-amber" />
-                <span className="font-display font-semibold text-[13px] text-slate-200">Earnings Quality</span>
+                <InfoTip text={TOOLTIPS.earningsQuality}><span className="font-display font-semibold text-[13px] text-slate-200">Earnings Quality</span></InfoTip>
               </div>
               {(() => {
                 const earnings = data.earnings || []
@@ -495,7 +619,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
             <div className="panel p-4">
               <div className="flex items-center gap-2 mb-4">
                 <Target size={14} className="text-electric-400" />
-                <span className="font-display font-semibold text-[13px] text-slate-200">Price Targets</span>
+                <InfoTip text={TOOLTIPS.priceTarget}><span className="font-display font-semibold text-[13px] text-slate-200">Price Targets</span></InfoTip>
               </div>
               {(() => {
                 const pt = data.priceTargets
@@ -535,7 +659,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
             <div className="panel p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Users size={14} className="text-electric-400" />
-                <span className="font-display font-semibold text-[13px] text-slate-200">Insider Activity</span>
+                <InfoTip text={TOOLTIPS.insiderActivity}><span className="font-display font-semibold text-[13px] text-slate-200">Insider Activity</span></InfoTip>
               </div>
               {(() => {
                 const insiders = data.insiders || []
@@ -636,10 +760,10 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                 return (
                   <div className="space-y-2.5">
                     {[
-                      { label: 'Volatility (Ann.)', value: r.annualizedVolatility ? r.annualizedVolatility.toFixed(1) + '%' : '—', color: volColor },
-                      { label: 'Max Drawdown',     value: r.maxDrawdown ? r.maxDrawdown.toFixed(1) + '%' : '—',           color: '#ff4466' },
-                      { label: 'Sharpe Ratio',     value: r.sharpeRatio  ? r.sharpeRatio.toFixed(2)  : '—',               color: sharpeColor },
-                      { label: 'Sortino Ratio',    value: r.sortinoRatio ? r.sortinoRatio.toFixed(2) : '—',               color: sharpeColor },
+                      { label: <InfoTip text={TOOLTIPS.volatility}>Volatility (Ann.)</InfoTip>, value: r.annualizedVolatility ? r.annualizedVolatility.toFixed(1) + '%' : '—', color: volColor },
+                      { label: <InfoTip text={TOOLTIPS.maxDrawdown}>Max Drawdown</InfoTip>,     value: r.maxDrawdown ? r.maxDrawdown.toFixed(1) + '%' : '—',           color: '#ff4466' },
+                      { label: <InfoTip text={TOOLTIPS.sharpe}>Sharpe Ratio</InfoTip>,     value: r.sharpeRatio  ? r.sharpeRatio.toFixed(2)  : '—',               color: sharpeColor },
+                      { label: <InfoTip text={TOOLTIPS.sortino}>Sortino Ratio</InfoTip>,    value: r.sortinoRatio ? r.sortinoRatio.toFixed(2) : '—',               color: sharpeColor },
                       { label: 'Total Return 1Y',  value: r.totalReturn  != null ? (r.totalReturn > 0 ? '+' : '') + r.totalReturn.toFixed(1) + '%' : '—', color: r.totalReturn >= 0 ? '#00ff88' : '#ff4466' },
                       { label: 'Best Day',         value: r.bestDay  ? '+' + r.bestDay.toFixed(1) + '%'  : '—', color: '#00ff88' },
                       { label: 'Worst Day',        value: r.worstDay ? r.worstDay.toFixed(1) + '%' : '—', color: '#ff4466' },
@@ -658,7 +782,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
             <div className="panel p-4">
               <div className="flex items-center gap-2 mb-4">
                 <Target size={14} className="text-terminal-amber" />
-                <span className="font-display font-semibold text-[13px] text-slate-200">Fair Value</span>
+                <InfoTip text={TOOLTIPS.fairValue}><span className="font-display font-semibold text-[13px] text-slate-200">Fair Value</span></InfoTip>
                 <span className="ml-auto font-mono text-[9px] text-slate-600 uppercase">Eulerpool</span>
               </div>
               {data.fairValue ? (() => {
@@ -713,9 +837,9 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                 return (
                   <div className="space-y-3">
                     {[
-                      { label: 'Gross Margin',  v1: m.gross1y, v3: m.gross3y },
-                      { label: 'Net Margin',    v1: m.net1y,   v3: m.net3y   },
-                      { label: 'FCF Margin',    v1: m.fcf1y,   v3: null       },
+                      { label: <InfoTip text={TOOLTIPS.grossMargin}>Gross Margin</InfoTip>, v1: m.gross1y, v3: m.gross3y },
+                      { label: <InfoTip text={TOOLTIPS.ebitMargin}>EBIT Margin</InfoTip>,  v1: m.ebit1y,  v3: m.ebit3y  },
+                      { label: <InfoTip text={TOOLTIPS.netMargin}>Net Margin</InfoTip>,   v1: m.net1y,   v3: m.net3y   },
                     ].map(({ label, v1, v3 }) => (
                       <div key={label}>
                         <div className="flex items-center justify-between mb-1">
@@ -755,11 +879,11 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                 return (
                   <div className="space-y-2.5">
                     {[
-                      { label: 'Revenue 3Y',  value: g.revenue3y },
-                      { label: 'Revenue 5Y',  value: g.revenue5y },
-                      { label: 'Earnings 3Y', value: g.income3y  },
-                      { label: 'Earnings 5Y', value: g.income5y  },
-                      { label: 'EBIT 3Y',     value: g.ebit3y    },
+                      { label: <InfoTip text={TOOLTIPS.revenueGrowth}>Revenue 3Y</InfoTip>,  value: g.revenue3y },
+                      { label: <InfoTip text={TOOLTIPS.revenueGrowth}>Revenue 5Y</InfoTip>,  value: g.revenue5y },
+                      { label: <InfoTip text={TOOLTIPS.earningsGrowth}>Earnings 3Y</InfoTip>, value: g.income3y  },
+                      { label: <InfoTip text={TOOLTIPS.earningsGrowth}>Earnings 5Y</InfoTip>, value: g.income5y  },
+                      { label: <InfoTip text={TOOLTIPS.ebitMargin}>EBIT 3Y</InfoTip>,     value: g.ebit3y    },
                     ].map(({ label, value }) => (
                       <div key={label} className="flex justify-between items-center">
                         <span className="font-mono text-[10px] text-slate-500">{label}</span>
