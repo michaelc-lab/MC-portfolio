@@ -517,6 +517,112 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
   )
 }
 
+
+
+function ImportIdSection({ onClose }) {
+  const [val, setVal] = useState('')
+  const [applied, setApplied] = useState(false)
+
+  const handleApply = () => {
+    const id = val.trim()
+    if (!id.startsWith('u_')) return
+    localStorage.setItem('mc_user_id', id)
+    setApplied(true)
+    setTimeout(() => {
+      onClose()
+      window.location.reload()
+    }, 1000)
+  }
+
+  return (
+    <div>
+      <div className="font-mono text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Import ID from another device</div>
+      <div className="flex gap-2">
+        <input
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          placeholder="Paste ID here (u_...)"
+          className="flex-1 bg-navy-900 border border-white/10 rounded px-3 py-1.5 text-[11px] font-mono text-slate-300 placeholder-slate-600 focus:outline-none focus:border-electric-500/40"
+        />
+        <button
+          onClick={handleApply}
+          disabled={!val.startsWith('u_')}
+          className={`px-3 py-1.5 rounded text-[11px] font-mono font-semibold border transition-all flex-shrink-0 ${
+            applied
+              ? 'border-terminal-green/40 bg-terminal-green/10 text-terminal-green'
+              : 'border-electric-500/30 bg-electric-500/10 text-electric-400 hover:border-electric-500/50 disabled:opacity-40'
+          }`}
+        >
+          {applied ? '✓ Applied!' : 'Apply'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── User ID Badge ─────────────────────────────────────────────
+function UserIdBadge({ userId }) {
+  const [copied, setCopied] = useState(false)
+  const [show, setShow] = useState(false)
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(userId).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setShow(s => !s)}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-white/10 bg-white/[0.02] hover:border-electric-500/30 hover:bg-electric-500/5 transition-all"
+        title="Device sync ID"
+      >
+        <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">Sync ID</span>
+        <span className="w-1.5 h-1.5 rounded-full bg-terminal-green animate-pulse-slow" />
+      </button>
+
+      {show && (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(100% + 8px)',
+          right: 0,
+          zIndex: 9999,
+          width: 320,
+          background: '#0a1628',
+          border: '1px solid rgba(14,165,233,0.3)',
+          borderRadius: 10,
+          padding: '14px 16px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
+        }}>
+          <div className="font-mono text-[11px] text-slate-400 mb-2 uppercase tracking-wider">Your Device Sync ID</div>
+          <div className="flex items-center gap-2 mb-3">
+            <code className="flex-1 font-mono text-[11px] text-electric-300 bg-navy-900 px-3 py-2 rounded border border-white/10 truncate">
+              {userId}
+            </code>
+            <button
+              onClick={handleCopy}
+              className={`px-3 py-2 rounded text-[11px] font-mono font-semibold border transition-all flex-shrink-0 ${
+                copied
+                  ? 'border-terminal-green/40 bg-terminal-green/10 text-terminal-green'
+                  : 'border-electric-500/30 bg-electric-500/10 text-electric-400 hover:border-electric-500/50'
+              }`}
+            >
+              {copied ? '✓ Copied' : 'Copy'}
+            </button>
+          </div>
+          <div className="font-mono text-[10px] text-slate-500 mb-3 leading-relaxed">
+            To sync on another device, copy your ID above, open the dashboard on that device, paste it below and click Apply.
+          </div>
+          <ImportIdSection onClose={() => setShow(false)} />
+          <button onClick={() => setShow(false)} className="absolute top-3 right-3 text-slate-600 hover:text-slate-400 font-mono text-[12px]">✕</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Export ───────────────────────────────────────────────
 export default function CustomPortfolios({ onAnalyze }) {
   const [portfolios,   setPortfolios]   = useState([])
@@ -640,12 +746,12 @@ export default function CustomPortfolios({ onAnalyze }) {
           <Plus size={12} /> New
         </button>
 
-        {/* Sync status */}
-        <div className="ml-auto flex items-center gap-2">
+        {/* Sync status + User ID */}
+        <div className="ml-auto flex items-center gap-3">
           {syncing && <span className="font-mono text-[10px] text-slate-600 uppercase tracking-wider animate-pulse">Syncing…</span>}
           {syncStatus === 'saved' && <span className="font-mono text-[10px] text-terminal-green uppercase tracking-wider">✓ Saved</span>}
           {syncStatus === 'error' && <span className="font-mono text-[10px] text-terminal-red uppercase tracking-wider">⚠ Sync failed</span>}
-          <span className="font-mono text-[9px] text-slate-700 uppercase tracking-wider">Synced across devices</span>
+          <UserIdBadge userId={userId.current} />
         </div>
       </div>
 
