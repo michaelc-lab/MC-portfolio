@@ -65,11 +65,19 @@ async function saveToSheet(userId, portfolios) {
 async function fetchQuote(ticker) {
   const now = Date.now()
   if (QUOTE_CACHE[ticker] && now - QUOTE_CACHE[ticker].ts < QUOTE_TTL) return QUOTE_CACHE[ticker].data
-  try {
-    const data = await jsonp(`${APPS_SCRIPT_URL}?action=getQuote&ticker=${encodeURIComponent(ticker)}`)
-    if (data && data.price != null) { QUOTE_CACHE[ticker] = { ts: now, data }; return data }
-    return null
-  } catch { return null }
+  // Try up to 2 times
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const data = await jsonp(`${APPS_SCRIPT_URL}?action=getQuote&ticker=${encodeURIComponent(ticker)}`)
+      if (data && data.price != null) {
+        QUOTE_CACHE[ticker] = { ts: now, data }
+        return data
+      }
+    } catch(e) {
+      if (attempt === 0) await new Promise(r => setTimeout(r, 1000)) // wait 1s before retry
+    }
+  }
+  return null
 }
 
 function newId() { return Math.random().toString(36).slice(2) + Date.now().toString(36) }
@@ -229,13 +237,11 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
     const missing = positions.filter(p => !quotes[p.ticker])
     if (!missing.length) return
     setLoading(new Set(missing.map(p => p.ticker)))
-    Promise.all(
-      missing.map(p => fetchQuote(p.ticker).then(q => ({ ticker: p.ticker, q })))
-    ).then(results => {
-      const newQuotes = {}
-      results.forEach(({ ticker, q }) => { if (q) newQuotes[ticker] = q })
-      setQuotes(prev => ({ ...prev, ...newQuotes }))
-      setLoading(new Set())
+    missing.forEach(p => {
+      fetchQuote(p.ticker).then(q => {
+        if (q) setQuotes(prev => ({ ...prev, [p.ticker]: q }))
+        setLoading(prev => { const s = new Set(prev); s.delete(p.ticker); return s })
+      })
     })
   }, [positions.map(p => p.ticker).join(',')])
 
@@ -368,13 +374,11 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
     const missing = positions.filter(p => !quotes[p.ticker])
     if (!missing.length) return
     setLoading(new Set(missing.map(p => p.ticker)))
-    Promise.all(
-      missing.map(p => fetchQuote(p.ticker).then(q => ({ ticker: p.ticker, q })))
-    ).then(results => {
-      const newQuotes = {}
-      results.forEach(({ ticker, q }) => { if (q) newQuotes[ticker] = q })
-      setQuotes(prev => ({ ...prev, ...newQuotes }))
-      setLoading(new Set())
+    missing.forEach(p => {
+      fetchQuote(p.ticker).then(q => {
+        if (q) setQuotes(prev => ({ ...prev, [p.ticker]: q }))
+        setLoading(prev => { const s = new Set(prev); s.delete(p.ticker); return s })
+      })
     })
   }, [positions.map(p => p.ticker).join(',')])
 
