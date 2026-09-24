@@ -405,7 +405,7 @@ function DualChart({ chartA, chartB, tickerA, tickerB }) {
 }
 
 // ── Analyze view ──────────────────────────────────────────────
-function AnalyzeView({ portfolio, watchlist, initialTicker }) {
+function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [ticker,      setTicker]      = useState('')
   const [selectVal,   setSelectVal]   = useState('')
   const [data,        setData]        = useState(null)
@@ -502,7 +502,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
           </div>
 
           {/* Metrics */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
             <MetricCard label="Market Cap"   value={'$' + fmtLarge((data.profile.marketCapitalization || 0) * 1e6)} />
             <MetricCard label="P/E Ratio"    value={pe     != null ? fmt(pe, 1)       : '—'} />
             <MetricCard label="EPS (Annual)" value={eps    != null ? '$' + fmt(eps, 2) : '—'} />
@@ -526,7 +526,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
           </div>
 
           {/* Analyst + EPS + Revenue */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
             <div className="panel p-4">
               <div className="flex items-center gap-2 mb-4">
                 <Award size={14} className="text-electric-400" />
@@ -577,7 +577,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
           </div>
 
           {/* Phase 1: Earnings Quality + Price Targets + Insider Activity */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
 
             {/* Earnings Quality Score */}
             <div className="panel p-4">
@@ -753,7 +753,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
           </div>
 
           {/* Phase 2: Risk Profile + Fair Value + Margins + Growth */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className={`grid gap-4 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
 
             {/* Risk Profile */}
             <div className="panel p-4">
@@ -938,7 +938,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
 }
 
 // ── Compare view ──────────────────────────────────────────────
-function CompareView({ portfolio, watchlist }) {
+function CompareView({ portfolio, watchlist, isMobile }) {
   const [tickerA, setTickerA] = useState('')
   const [tickerB, setTickerB] = useState('')
   const [data,    setData]    = useState(null)
@@ -995,7 +995,7 @@ function CompareView({ portfolio, watchlist }) {
       {data && !loading && (
         <div className="animate-slide-up space-y-4">
           {/* Split layout: table left, chart right */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
             {/* Metrics table — left half */}
             <div className="panel overflow-hidden">
               <table className="data-table">
@@ -1050,7 +1050,7 @@ function CompareView({ portfolio, watchlist }) {
 }
 
 // ── Export ────────────────────────────────────────────────────
-export default function WorkstationTab({ portfolio, watchlist, initialTicker }) {
+export default function WorkstationTab({ portfolio, watchlist, initialTicker, isMobile }) {
   const [sub, setSub] = useState('analyze')
   return (
     <div className="space-y-4 animate-fade-in">
@@ -1064,8 +1064,8 @@ export default function WorkstationTab({ portfolio, watchlist, initialTicker }) 
         ))}
       </div>
       {sub === 'analyze'
-        ? <AnalyzeView portfolio={portfolio} watchlist={watchlist} initialTicker={initialTicker} />
-        : <CompareView portfolio={portfolio} watchlist={watchlist} />
+        ? <AnalyzeView portfolio={portfolio} watchlist={watchlist} initialTicker={initialTicker} isMobile={isMobile} />
+        : <CompareView portfolio={portfolio} watchlist={watchlist} isMobile={isMobile} />
       }
     </div>
   )
