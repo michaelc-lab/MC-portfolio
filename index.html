@@ -6,11 +6,140 @@
   <title>MC Portfolio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #020817; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; }
+
+    #splash {
+      position: fixed;
+      inset: 0;
+      background: linear-gradient(135deg, #020817 0%, #060d1f 50%, #0a1628 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 28px;
+      z-index: 99999;
+      transition: opacity 0.4s ease;
+    }
+    #splash.hidden { opacity: 0; pointer-events: none; }
+
+    .splash-logo-wrap {
+      position: relative;
+      width: 80px;
+      height: 80px;
+    }
+    .splash-logo {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      border: 2px solid rgba(14,165,233,0.3);
+      background: rgba(14,165,233,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: splashGlow 2s ease-in-out infinite;
+    }
+    .splash-logo span {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 28px;
+      color: #38bdf8;
+    }
+    .splash-ring {
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      border-top-color: #0ea5e9;
+      border-right-color: rgba(14,165,233,0.3);
+      animation: spin 1.2s linear infinite;
+    }
+    .splash-title {
+      text-align: center;
+    }
+    .splash-title h1 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 28px;
+      color: white;
+      letter-spacing: -0.5px;
+    }
+    .splash-title h1 span {
+      color: #38bdf8;
+      font-weight: 300;
+      font-style: italic;
+    }
+    .splash-title p {
+      font-size: 10px;
+      color: #334155;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      margin-top: 6px;
+    }
+    .splash-bar-wrap {
+      width: 200px;
+      height: 2px;
+      background: rgba(14,165,233,0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .splash-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+      border-radius: 2px;
+      animation: loadBar 1.5s ease-in-out infinite;
+    }
+    .splash-text {
+      font-size: 11px;
+      color: #475569;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+
+    @keyframes splashGlow {
+      0%, 100% { box-shadow: 0 0 20px rgba(14,165,233,0.2); }
+      50% { box-shadow: 0 0 50px rgba(14,165,233,0.5), 0 0 80px rgba(14,165,233,0.2); }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes loadBar {
+      0% { width: 0%; margin-left: 0; }
+      50% { width: 60%; margin-left: 20%; }
+      100% { width: 0%; margin-left: 100%; }
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+  </style>
 </head>
 <body>
+  <!-- Pure HTML splash — shows instantly before JS loads -->
+  <div id="splash">
+    <div class="splash-logo-wrap">
+      <div class="splash-logo"><span>MC</span></div>
+      <div class="splash-ring"></div>
+    </div>
+    <div class="splash-title">
+      <h1>MC <span>Portfolio</span></h1>
+      <p>Live · Multi-Sector · Real-Time</p>
+    </div>
+    <div class="splash-bar-wrap">
+      <div class="splash-bar"></div>
+    </div>
+    <div class="splash-text">Loading market data...</div>
+  </div>
+
   <div id="root"></div>
+
+  <script>
+    // Hide splash when React mounts
+    window.__hideSplash = function() {
+      var s = document.getElementById('splash')
+      if (s) { s.classList.add('hidden'); setTimeout(function(){ s.remove() }, 400) }
+    }
+  </script>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>
