@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Search, BarChart2, TrendingUp, Newspaper, Award } from 'lucide-react'
+import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
 import { fetchWorkstationData, fetchCompareData } from '../hooks/usePortfolioData'
@@ -440,6 +440,138 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                   : <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600 uppercase tracking-wider animate-pulse">Loading…</div>
                 }
               </div>
+            </div>
+          </div>
+
+          {/* Phase 1: Earnings Quality + Price Targets + Insider Activity */}
+          <div className="grid grid-cols-3 gap-4">
+
+            {/* Earnings Quality Score */}
+            <div className="panel p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Star size={14} className="text-terminal-amber" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">Earnings Quality</span>
+              </div>
+              {(() => {
+                const earnings = data.earnings || []
+                if (!earnings.length) return <div className="text-[11px] font-mono text-slate-600">No data</div>
+                const withSurprise = earnings.filter(e => e.surprisePercent != null)
+                const beats = withSurprise.filter(e => e.surprisePercent > 0).length
+                const total = withSurprise.length
+                const avgSurprise = total ? withSurprise.reduce((s,e) => s + e.surprisePercent, 0) / total : 0
+                const score = total ? Math.round((beats / total) * 10) : null
+                const scoreColor = score >= 8 ? '#00ff88' : score >= 5 ? '#ffb800' : '#ff4466'
+                const scoreLabel = score >= 8 ? 'Excellent' : score >= 6 ? 'Good' : score >= 4 ? 'Average' : 'Poor'
+                return (
+                  <div>
+                    <div className="flex items-end gap-2 mb-3">
+                      <span style={{fontFamily:'Space Grotesk',fontWeight:700,fontSize:42,color:scoreColor,lineHeight:1}}>{score ?? '—'}</span>
+                      <span className="font-mono text-[11px] text-slate-500 mb-1">/10</span>
+                      <span style={{color:scoreColor}} className="font-mono text-[12px] mb-1 font-semibold">{scoreLabel}</span>
+                    </div>
+                    <div className="space-y-1.5 text-[11px] font-mono">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Beat rate</span>
+                        <span className="text-slate-200">{beats}/{total} quarters</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Avg surprise</span>
+                        <span className={avgSurprise >= 0 ? 'positive' : 'negative'}>{avgSurprise > 0 ? '+' : ''}{avgSurprise.toFixed(1)}%</span>
+                      </div>
+                    </div>
+                    <div className="flex gap-0.5 mt-3">
+                      {withSurprise.slice().reverse().map((e, i) => (
+                        <div key={i} title={e.period + ': ' + (e.surprisePercent > 0 ? 'Beat' : 'Miss') + ' ' + e.surprisePercent?.toFixed(1) + '%'}
+                          style={{flex:1, height:24, borderRadius:3, background: e.surprisePercent > 0 ? 'rgba(0,255,136,0.7)' : 'rgba(255,68,102,0.7)'}} />
+                      ))}
+                    </div>
+                    <div className="font-mono text-[9px] text-slate-600 mt-1 text-center">Last {withSurprise.length} quarters ← oldest · newest →</div>
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* Price Target Distribution */}
+            <div className="panel p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Target size={14} className="text-electric-400" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">Price Targets</span>
+              </div>
+              {(() => {
+                const pt = data.priceTargets
+                const currentPrice = livePrice?.price
+                if (!pt || !pt.targetMean) return <div className="text-[11px] font-mono text-slate-600">No analyst targets</div>
+                const upside = currentPrice ? ((pt.targetMean - currentPrice) / currentPrice) * 100 : null
+                const upsideHigh = currentPrice ? ((pt.targetHigh - currentPrice) / currentPrice) * 100 : null
+                const upsideLow = currentPrice && pt.targetLow ? ((pt.targetLow - currentPrice) / currentPrice) * 100 : null
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-end gap-2">
+                      <span className="font-display font-bold text-[28px] text-slate-100 leading-none">{fmtPrice(pt.targetMean)}</span>
+                      {upside != null && <span className={`font-mono text-[13px] font-semibold mb-0.5 ${upside >= 0 ? 'positive' : 'negative'}`}>{upside > 0 ? '+' : ''}{upside.toFixed(1)}%</span>}
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-600 uppercase tracking-wider">Consensus target</div>
+                    <div className="space-y-2">
+                      {[
+                        { label: 'Bull (High)', value: pt.targetHigh, upside: upsideHigh, color: '#00ff88' },
+                        { label: 'Consensus', value: pt.targetMean, upside, color: '#38bdf8' },
+                        { label: 'Bear (Low)', value: pt.targetLow, upside: upsideLow, color: '#ff4466' },
+                      ].map(row => (
+                        <div key={row.label} className="flex items-center justify-between text-[11px] font-mono">
+                          <span className="text-slate-500">{row.label}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-200">{row.value ? fmtPrice(row.value) : '—'}</span>
+                            {row.upside != null && <span style={{color:row.color}}>({row.upside > 0 ? '+' : ''}{row.upside.toFixed(1)}%)</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* Insider Activity */}
+            <div className="panel p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Users size={14} className="text-electric-400" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">Insider Activity</span>
+              </div>
+              {(() => {
+                const insiders = data.insiders || []
+                if (!insiders.length) return <div className="text-[11px] font-mono text-slate-600">No recent insider transactions</div>
+                const buys = insiders.filter(t => t.isAcquire)
+                const sells = insiders.filter(t => !t.isAcquire)
+                const netSentiment = buys.length > sells.length ? 'Bullish' : buys.length < sells.length ? 'Bearish' : 'Neutral'
+                const sentColor = buys.length > sells.length ? '#00ff88' : buys.length < sells.length ? '#ff4466' : '#64748b'
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex gap-3">
+                        <span className="font-mono text-[12px]"><span className="positive font-bold">{buys.length} BUY</span></span>
+                        <span className="font-mono text-[12px]"><span className="negative font-bold">{sells.length} SELL</span></span>
+                      </div>
+                      <span style={{color:sentColor}} className="font-mono text-[11px] font-semibold">{netSentiment}</span>
+                    </div>
+                    <div className="space-y-1.5 overflow-auto max-h-40">
+                      {insiders.slice(0, 6).map((t, i) => (
+                        <div key={i} className="flex items-start justify-between py-1 border-b border-white/5 last:border-0">
+                          <div className="min-w-0 flex-1 mr-2">
+                            <div className="font-mono text-[11px] text-slate-300 truncate">{t.name}</div>
+                            <div className="font-mono text-[9px] text-slate-600">{t.date}</div>
+                          </div>
+                          <div className="text-right flex-shrink-0">
+                            <span className={`font-mono text-[11px] font-bold ${t.isAcquire ? 'positive' : 'negative'}`}>
+                              {t.isAcquire ? '+' : '-'}{Math.abs(t.share).toLocaleString()}
+                            </span>
+                            {t.value > 0 && <div className="font-mono text-[9px] text-slate-600">${fmtLarge(Math.abs(t.value))}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
 
