@@ -8,9 +8,31 @@ import { fetchWorkstationData, fetchCompareData } from '../hooks/usePortfolioDat
 // ── InfoTip Component ─────────────────────────────────────────
 function InfoTip({ text, children }) {
   const [show, setShow] = React.useState(false)
+  const [align, setAlign] = React.useState('center')
+  const ref = React.useRef(null)
+
+  const handleMouseEnter = () => {
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect()
+      const tooltipWidth = 260
+      const spaceLeft  = rect.left
+      const spaceRight = window.innerWidth - rect.right
+      if (spaceLeft < tooltipWidth / 2 + 10) setAlign('left')
+      else if (spaceRight < tooltipWidth / 2 + 10) setAlign('right')
+      else setAlign('center')
+    }
+    setShow(true)
+  }
+
+  const posStyle = align === 'left'
+    ? { left: 0,    transform: 'none' }
+    : align === 'right'
+    ? { right: 0,   transform: 'none' }
+    : { left: '50%', transform: 'translateX(-50%)' }
+
   return (
-    <span className="relative inline-flex items-center"
-      onMouseEnter={() => setShow(true)}
+    <span ref={ref} className="relative inline-flex items-center"
+      onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShow(false)}>
       {children}
       <span className="ml-1 text-slate-600 hover:text-electric-400 cursor-help text-[10px] select-none">ⓘ</span>
@@ -18,29 +40,16 @@ function InfoTip({ text, children }) {
         <div style={{
           position: 'absolute',
           bottom: 'calc(100% + 8px)',
-          left: '50%',
-          transform: 'translateX(-50%)',
+          ...posStyle,
           zIndex: 9999,
           width: 260,
           background: '#0a1628',
           border: '1px solid rgba(14,165,233,0.35)',
           borderRadius: 8,
           padding: '10px 12px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.8)',
           pointerEvents: 'none',
         }}>
-          {/* Arrow */}
-          <div style={{
-            position: 'absolute',
-            bottom: -5,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: 8, height: 8,
-            background: '#0a1628',
-            border: '1px solid rgba(14,165,233,0.35)',
-            borderTop: 'none', borderLeft: 'none',
-            transform: 'translateX(-50%) rotate(45deg)',
-          }} />
           <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#94a3b8', lineHeight: 1.7 }}
             dangerouslySetInnerHTML={{ __html: text }} />
         </div>
