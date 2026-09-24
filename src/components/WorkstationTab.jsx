@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star } from 'lucide-react'
+import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Shield } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
 import { fetchWorkstationData, fetchCompareData } from '../hooks/usePortfolioData'
@@ -582,6 +582,9 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                                     className="font-mono text-[11px] text-electric-300 hover:text-electric-200 hover:underline truncate block transition-colors cursor-pointer"
                                     title="Search on Google"
                                   >{t.name}</a>
+                                  {t.role && (
+                                    <div className="font-mono text-[9px] text-slate-500 truncate">{t.role}</div>
+                                  )}
                                   <div className="flex items-center gap-1.5 mt-0.5">
                                     <span style={{color: tx.color, fontSize:'9px', fontFamily:'IBM Plex Mono', fontWeight:700}}>
                                       {tx.label}
@@ -613,6 +616,161 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                   </div>
                 )
               })()}
+            </div>
+          </div>
+
+          {/* Phase 2: Risk Profile + Fair Value + Margins + Growth */}
+          <div className="grid grid-cols-4 gap-4">
+
+            {/* Risk Profile */}
+            <div className="panel p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart2 size={14} className="text-terminal-red" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">Risk Profile</span>
+                <span className="ml-auto font-mono text-[9px] text-slate-600 uppercase">1Y</span>
+              </div>
+              {data.riskProfile ? (() => {
+                const r = data.riskProfile
+                const sharpeColor = r.sharpeRatio > 1 ? '#00ff88' : r.sharpeRatio > 0 ? '#ffb800' : '#ff4466'
+                const volColor = r.annualizedVolatility < 20 ? '#00ff88' : r.annualizedVolatility < 35 ? '#ffb800' : '#ff4466'
+                return (
+                  <div className="space-y-2.5">
+                    {[
+                      { label: 'Volatility (Ann.)', value: r.annualizedVolatility ? r.annualizedVolatility.toFixed(1) + '%' : '—', color: volColor },
+                      { label: 'Max Drawdown',     value: r.maxDrawdown ? r.maxDrawdown.toFixed(1) + '%' : '—',           color: '#ff4466' },
+                      { label: 'Sharpe Ratio',     value: r.sharpeRatio  ? r.sharpeRatio.toFixed(2)  : '—',               color: sharpeColor },
+                      { label: 'Sortino Ratio',    value: r.sortinoRatio ? r.sortinoRatio.toFixed(2) : '—',               color: sharpeColor },
+                      { label: 'Total Return 1Y',  value: r.totalReturn  != null ? (r.totalReturn > 0 ? '+' : '') + r.totalReturn.toFixed(1) + '%' : '—', color: r.totalReturn >= 0 ? '#00ff88' : '#ff4466' },
+                      { label: 'Best Day',         value: r.bestDay  ? '+' + r.bestDay.toFixed(1) + '%'  : '—', color: '#00ff88' },
+                      { label: 'Worst Day',        value: r.worstDay ? r.worstDay.toFixed(1) + '%' : '—', color: '#ff4466' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} className="flex justify-between items-center">
+                        <span className="font-mono text-[10px] text-slate-500">{label}</span>
+                        <span style={{ color }} className="font-mono text-[11px] font-semibold">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })() : <div className="font-mono text-[11px] text-slate-600">No risk data</div>}
+            </div>
+
+            {/* Fair Value */}
+            <div className="panel p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Target size={14} className="text-terminal-amber" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">Fair Value</span>
+                <span className="ml-auto font-mono text-[9px] text-slate-600 uppercase">Eulerpool</span>
+              </div>
+              {data.fairValue ? (() => {
+                const fv = data.fairValue
+                const currentPrice = livePrice?.price
+                const upside = fv.fairValue && currentPrice ? ((fv.fairValue - currentPrice) / currentPrice) * 100 : fv.upside
+                const isUnder = upside > 0
+                return (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="font-mono text-[9px] uppercase tracking-wider text-slate-600 mb-1">Fair Value</div>
+                      <div className="flex items-end gap-2">
+                        <span className="font-display font-bold text-[28px] text-slate-100 leading-none">{fv.fairValue ? '$' + fv.fairValue.toFixed(0) : '—'}</span>
+                        {upside != null && (
+                          <span className={`font-mono text-[13px] font-bold mb-0.5 ${isUnder ? 'positive' : 'negative'}`}>
+                            {upside > 0 ? '+' : ''}{upside.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                      <div className={`font-mono text-[10px] mt-1 ${isUnder ? 'text-terminal-green' : 'text-terminal-red'}`}>
+                        {isUnder ? '▼ Undervalued' : '▲ Overvalued'}
+                      </div>
+                    </div>
+                    <div className="h-px bg-white/5" />
+                    <div className="space-y-1.5">
+                      {[
+                        { label: 'Income Model',  value: fv.fairValueIncome  ? '$' + fv.fairValueIncome.toFixed(0)  : '—' },
+                        { label: 'Revenue Model', value: fv.fairValueRevenue ? '$' + fv.fairValueRevenue.toFixed(0) : '—' },
+                        { label: 'Current Price', value: currentPrice ? '$' + currentPrice.toFixed(2) : '—' },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex justify-between">
+                          <span className="font-mono text-[10px] text-slate-500">{label}</span>
+                          <span className="font-mono text-[11px] text-slate-300">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })() : <div className="font-mono text-[11px] text-slate-600">No fair value data</div>}
+            </div>
+
+            {/* Margins Trend */}
+            <div className="panel p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <TrendingUp size={14} className="text-electric-400" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">Margins</span>
+              </div>
+              {data.margins ? (() => {
+                const m = data.margins
+                const trendIcon = (a, b) => a != null && b != null ? (a > b ? '▲' : a < b ? '▼' : '→') : ''
+                const trendColor = (a, b) => a != null && b != null ? (a > b ? '#00ff88' : a < b ? '#ff4466' : '#64748b') : '#64748b'
+                return (
+                  <div className="space-y-3">
+                    {[
+                      { label: 'Gross Margin',  v1: m.gross1y, v3: m.gross3y },
+                      { label: 'Net Margin',    v1: m.net1y,   v3: m.net3y   },
+                      { label: 'FCF Margin',    v1: m.fcf1y,   v3: null       },
+                    ].map(({ label, v1, v3 }) => (
+                      <div key={label}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-mono text-[10px] text-slate-500">{label}</span>
+                          <div className="flex items-center gap-1.5">
+                            {v3 != null && (
+                              <span className="font-mono text-[9px] text-slate-600">3Y: {v3.toFixed(1)}%</span>
+                            )}
+                            <span style={{ color: trendColor(v1, v3) }} className="font-mono text-[10px]">
+                              {trendIcon(v1, v3)}
+                            </span>
+                            <span className="font-mono text-[12px] font-semibold text-slate-200">
+                              {v1 != null ? v1.toFixed(1) + '%' : '—'}
+                            </span>
+                          </div>
+                        </div>
+                        {v1 != null && (
+                          <div className="h-1.5 bg-navy-800 rounded overflow-hidden">
+                            <div className="h-full rounded" style={{ width: Math.min(v1, 100) + '%', background: trendColor(v1, v3) }} />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })() : <div className="font-mono text-[11px] text-slate-600">No margin data</div>}
+            </div>
+
+            {/* Growth Rates */}
+            <div className="panel p-4">
+              <div className="flex items-center gap-2 mb-4">
+                <TrendingUp size={14} className="text-terminal-green" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">Growth (CAGR)</span>
+              </div>
+              {data.growth ? (() => {
+                const g = data.growth
+                return (
+                  <div className="space-y-2.5">
+                    {[
+                      { label: 'Revenue 3Y',  value: g.revenue3y },
+                      { label: 'Revenue 5Y',  value: g.revenue5y },
+                      { label: 'Earnings 3Y', value: g.income3y  },
+                      { label: 'Earnings 5Y', value: g.income5y  },
+                      { label: 'EBIT 3Y',     value: g.ebit3y    },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="flex justify-between items-center">
+                        <span className="font-mono text-[10px] text-slate-500">{label}</span>
+                        <span className={`font-mono text-[12px] font-semibold ${value == null ? 'text-slate-600' : value >= 10 ? 'positive' : value >= 0 ? 'text-terminal-amber' : 'negative'}`}>
+                          {value != null ? (value > 0 ? '+' : '') + value.toFixed(1) + '%' : '—'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })() : <div className="font-mono text-[11px] text-slate-600">No growth data</div>}
             </div>
           </div>
 
