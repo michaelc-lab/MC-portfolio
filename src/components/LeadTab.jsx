@@ -386,7 +386,7 @@ function SectorPulse({ portfolio }) {
 }
 
 // ── Main export ───────────────────────────────────────────────
-export default function LeadTab({ portfolio, onAnalyze }) {
+export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
   const withDay    = portfolio.filter(r => r.dayChangePct != null)
   const withWeek   = portfolio.filter(r => r.weekChangePct != null)
   const atATH      = portfolio.filter(r => r.atATH)
@@ -399,7 +399,7 @@ export default function LeadTab({ portfolio, onAnalyze }) {
   return (
     <div className="space-y-5 animate-fade-in">
       {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-3'}`}>
         <SectorPulse portfolio={portfolio} />
         <KpiCard label="At ATH" value={atATH.length} sub="within 0.5% of high" color="green" icon={Zap}
           clickable onClick={() => setModal('ath')} />
@@ -409,13 +409,13 @@ export default function LeadTab({ portfolio, onAnalyze }) {
 
 
       {/* Daily movers */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
         <MoverTable title="Top 5 Gainers Today"  rows={sortedDay.slice(0, 5)}          meta="Portfolio · 1D"     type="gain" />
         <MoverTable title="Top 5 Losers Today"   rows={sortedDay.slice(-5).reverse()}   meta="Portfolio · 1D"     type="loss" />
       </div>
 
       {/* Weekly movers */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
         <MoverTable title="Top 5 Winners (7d)"   rows={sortedWeek.slice(0, 5)}         meta="Portfolio · Weekly" type="gain" useWeek />
         <MoverTable title="Top 5 Losers (7d)"    rows={sortedWeek.slice(-5).reverse()}  meta="Portfolio · Weekly" type="loss" useWeek />
       </div>
