@@ -39,3 +39,7 @@
 .data-table tr:hover td { background:rgba(14,165,233,0.03); }
 .recharts-cartesian-grid line { stroke:rgba(14,165,233,0.06); }
 .recharts-text { fill:#475569 !important; font-family:'IBM Plex Mono' !important; font-size:10px !important; }
+
+/* Hide scrollbar on mobile strips */
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
