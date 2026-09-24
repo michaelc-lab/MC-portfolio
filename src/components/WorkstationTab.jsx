@@ -540,8 +540,8 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
               {(() => {
                 const insiders = data.insiders || []
                 if (!insiders.length) return <div className="text-[11px] font-mono text-slate-600">No recent insider transactions</div>
-                const buys = insiders.filter(t => t.isAcquire)
-                const sells = insiders.filter(t => !t.isAcquire)
+                const buys  = insiders.filter(t => t.transactionCode === 'P')
+                const sells = insiders.filter(t => t.transactionCode === 'S')
                 const netSentiment = buys.length > sells.length ? 'Bullish' : buys.length < sells.length ? 'Bearish' : 'Neutral'
                 const sentColor = buys.length > sells.length ? '#00ff88' : buys.length < sells.length ? '#ff4466' : '#64748b'
                 return (
@@ -571,12 +571,19 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                           {all.slice(0, 8).map((t, i) => {
                             const tx = txLabel(t.transactionCode)
                             const isMeaningful = t.transactionCode === 'P' || t.transactionCode === 'S'
-                            return (
-                              <div key={i} className={`flex items-start justify-between py-1.5 border-b border-white/5 last:border-0 ${isMeaningful ? '' : 'opacity-50'}`}>
+                            // Skip non-meaningful transaction types
+                          if (['F','A','M'].includes(t.transactionCode)) return null
+                          return (
+                              <div key={i} className="flex items-start justify-between py-1.5 border-b border-white/5 last:border-0">
                                 <div className="min-w-0 flex-1 mr-2">
-                                  <div className="font-mono text-[11px] text-slate-200 truncate">{t.name}</div>
+                                  <a
+                                    href={`https://www.google.com/search?q=${encodeURIComponent(t.name + ' ' + data.ticker + ' insider executive')}`}
+                                    target="_blank" rel="noopener noreferrer"
+                                    className="font-mono text-[11px] text-electric-300 hover:text-electric-200 hover:underline truncate block transition-colors cursor-pointer"
+                                    title="Search on Google"
+                                  >{t.name}</a>
                                   <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span style={{color: tx.color, fontSize:'9px', fontFamily:'IBM Plex Mono', fontWeight: isMeaningful ? 700 : 400}}>
+                                    <span style={{color: tx.color, fontSize:'9px', fontFamily:'IBM Plex Mono', fontWeight:700}}>
                                       {tx.label}
                                     </span>
                                     {tx.signal && <span style={{fontSize:'8px'}}>{tx.signal.split(' ')[0]}</span>}
@@ -585,10 +592,10 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                                 </div>
                                 <div className="text-right flex-shrink-0">
                                   <div style={{color: tx.color}} className="font-mono text-[11px] font-bold">
-                                    {t.transactionCode === 'P' ? '+' : t.transactionCode === 'S' ? '−' : ''}
+                                    {t.transactionCode === 'P' ? '+' : '−'}
                                     {Math.abs(t.change || 0).toLocaleString()}
                                   </div>
-                                  {t.value > 0 && isMeaningful && (
+                                  {t.value > 0 && (
                                     <div className="font-mono text-[9px] text-slate-500">
                                       ${fmtLarge(t.value)}
                                     </div>
