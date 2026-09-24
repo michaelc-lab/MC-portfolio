@@ -553,22 +553,56 @@ function AnalyzeView({ portfolio, watchlist, initialTicker }) {
                       </div>
                       <span style={{color:sentColor}} className="font-mono text-[11px] font-semibold">{netSentiment}</span>
                     </div>
-                    <div className="space-y-1.5 overflow-auto max-h-40">
-                      {insiders.slice(0, 6).map((t, i) => (
-                        <div key={i} className="flex items-start justify-between py-1 border-b border-white/5 last:border-0">
-                          <div className="min-w-0 flex-1 mr-2">
-                            <div className="font-mono text-[11px] text-slate-300 truncate">{t.name}</div>
-                            <div className="font-mono text-[9px] text-slate-600">{t.date}</div>
-                          </div>
-                          <div className="text-right flex-shrink-0">
-                            <span className={`font-mono text-[11px] font-bold ${t.isAcquire ? 'positive' : 'negative'}`}>
-                              {t.isAcquire ? '+' : '-'}{Math.abs(t.share).toLocaleString()}
-                            </span>
-                            {t.value > 0 && <div className="font-mono text-[9px] text-slate-600">${fmtLarge(Math.abs(t.value))}</div>}
-                          </div>
+                    {(() => {
+                      const txLabel = code => {
+                        switch(code) {
+                          case 'P': return { label: 'Open Mkt Buy',  color: '#00ff88', signal: '🟢 Strong signal' }
+                          case 'S': return { label: 'Open Mkt Sale', color: '#ff4466', signal: '🔴 Sale' }
+                          case 'A': return { label: 'Award/Grant',   color: '#475569', signal: '' }
+                          case 'F': return { label: 'Tax Withhold',  color: '#475569', signal: '' }
+                          case 'M': return { label: 'Option Exer.',  color: '#64748b', signal: '' }
+                          default:  return { label: code || 'Other', color: '#475569', signal: '' }
+                        }
+                      }
+                      const meaningful = insiders.filter(t => ['P','S'].includes(t.transactionCode))
+                      const all = insiders
+                      return (
+                        <div className="space-y-1 overflow-auto max-h-48">
+                          {all.slice(0, 8).map((t, i) => {
+                            const tx = txLabel(t.transactionCode)
+                            const isMeaningful = t.transactionCode === 'P' || t.transactionCode === 'S'
+                            return (
+                              <div key={i} className={`flex items-start justify-between py-1.5 border-b border-white/5 last:border-0 ${isMeaningful ? '' : 'opacity-50'}`}>
+                                <div className="min-w-0 flex-1 mr-2">
+                                  <div className="font-mono text-[11px] text-slate-200 truncate">{t.name}</div>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span style={{color: tx.color, fontSize:'9px', fontFamily:'IBM Plex Mono', fontWeight: isMeaningful ? 700 : 400}}>
+                                      {tx.label}
+                                    </span>
+                                    {tx.signal && <span style={{fontSize:'8px'}}>{tx.signal.split(' ')[0]}</span>}
+                                  </div>
+                                  <div className="font-mono text-[9px] text-slate-600">{t.date}</div>
+                                </div>
+                                <div className="text-right flex-shrink-0">
+                                  <div style={{color: tx.color}} className="font-mono text-[11px] font-bold">
+                                    {t.transactionCode === 'P' ? '+' : t.transactionCode === 'S' ? '−' : ''}
+                                    {Math.abs(t.change || 0).toLocaleString()}
+                                  </div>
+                                  {t.value > 0 && isMeaningful && (
+                                    <div className="font-mono text-[9px] text-slate-500">
+                                      ${fmtLarge(t.value)}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {meaningful.length === 0 && (
+                            <div className="font-mono text-[10px] text-slate-600 text-center py-2">No open-market transactions recently</div>
+                          )}
                         </div>
-                      ))}
-                    </div>
+                      )
+                    })()}
                   </div>
                 )
               })()}
