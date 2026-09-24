@@ -671,11 +671,23 @@ export default function CustomPortfolios({ onAnalyze }) {
   const [pinError, setPinError] = useState('')
   const saveTimer = useRef(null)
 
-  const applyId = (raw) => {
+  const applyId = async (raw) => {
     const clean = raw.trim().toLowerCase().replace(/[^a-z0-9_]/g, '')
     if (clean.length < 3) { setPinError('At least 3 characters'); return }
-    const id = clean.startsWith('u_') ? clean : 'u_' + clean
-    saveId(id); setUserId(id); setPinError('')
+    const newId = clean.startsWith('u_') ? clean : 'u_' + clean
+    
+    // Check if there's an old random ID to migrate from
+    const oldId = getSavedId()
+    if (oldId && oldId !== newId && oldId.startsWith('u_') && oldId.length > 15) {
+      // Looks like a random ID — trigger server-side migration
+      try {
+        await jsonp(APPS_SCRIPT_URL + '?action=migratePortfolioId&oldId=' + encodeURIComponent(oldId) + '&newId=' + encodeURIComponent(newId))
+      } catch(e) {}
+    }
+    
+    saveId(newId)
+    setUserId(newId)
+    setPinError('')
   }
 
   // Load from Sheet on mount
