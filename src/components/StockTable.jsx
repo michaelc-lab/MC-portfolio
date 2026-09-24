@@ -49,10 +49,16 @@ function DdCell({ dd }) {
   return <span className={`font-mono ${cls}`}>{fmtPct(dd, 1)}</span>
 }
 
-export default function StockTable({ rows, isWatchlist = false, onAnalyze }) {
+export default function StockTable({ rows, isWatchlist = false, onAnalyze, isMobile }) {
   const [sort,   setSort]   = useState({ key: 'dd', dir: 'asc' })
   const [filter, setFilter] = useState({ q: '', sector: '', status: '' })
-  const cols = isWatchlist ? COLS_WATCHLIST : COLS_PORTFOLIO
+  const COLS_MOBILE = [
+    { key: 'ticker',       label: 'Ticker'  },
+    { key: 'price',        label: 'Price',       num: true },
+    { key: 'dayChangePct', label: 'Δ Today',     num: true },
+    { key: 'dd',           label: 'Δ ATH',       num: true },
+  ]
+  const cols = isMobile ? COLS_MOBILE : (isWatchlist ? COLS_WATCHLIST : COLS_PORTFOLIO)
 
   const sectors = useMemo(() => {
     const s = new Set(rows.map(r => r.sector).filter(Boolean))
@@ -75,7 +81,7 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze }) {
   return (
     <div className="space-y-3 animate-fade-in">
       {/* Controls row */}
-      <div className="flex gap-2 flex-wrap items-center">
+      <div className={`flex gap-2 items-center ${isMobile ? 'flex-wrap' : 'flex-wrap'}`}>
         {/* Search */}
         <div className="relative flex-1 min-w-48">
           <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
@@ -87,17 +93,19 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze }) {
           />
         </div>
 
-        {/* Category dropdown — replaces bubbles */}
-        <select
-          value={filter.sector}
-          onChange={e => setFilter(f => ({ ...f, sector: e.target.value }))}
-          className="bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[12px] font-mono text-slate-400 focus:outline-none focus:border-electric-500/40 appearance-none cursor-pointer min-w-[180px]"
-        >
-          <option value="">All Sectors ({rows.length})</option>
-          {sectors.map(s => (
-            <option key={s} value={s}>{s} ({sectorCounts[s]})</option>
-          ))}
-        </select>
+        {/* Category dropdown */}
+        {!isMobile && (
+          <select
+            value={filter.sector}
+            onChange={e => setFilter(f => ({ ...f, sector: e.target.value }))}
+            className="bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[12px] font-mono text-slate-400 focus:outline-none focus:border-electric-500/40 appearance-none cursor-pointer min-w-[180px]"
+          >
+            <option value="">All Sectors ({rows.length})</option>
+            {sectors.map(s => (
+              <option key={s} value={s}>{s} ({sectorCounts[s]})</option>
+            ))}
+          </select>
+        )}
 
         {/* Status dropdown */}
         <select
@@ -131,7 +139,7 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze }) {
       </div>
 
       {/* Table */}
-      <div className="panel overflow-auto max-h-[600px]">
+      <div className={`panel overflow-auto ${isMobile ? 'max-h-[70vh]' : 'max-h-[600px]'}`}>
         <table className="data-table">
           <thead>
             <tr>
