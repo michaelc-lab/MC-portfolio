@@ -112,6 +112,11 @@ function LoadingSkeleton({ isMobile }) {
 
 export default function App() {
   const { data, loading, error, lastUpdated, refresh } = usePortfolioData()
+
+  // Hide the HTML splash screen as soon as React renders
+  React.useEffect(() => {
+    if (window.__hideSplash) window.__hideSplash()
+  }, [])
   const { isMobile, isSmall } = useDevice()
   const [tab, setTab] = useState('lead')
   const [wsAnalyzeTicker, setWsAnalyzeTicker] = useState(null)
@@ -142,8 +147,7 @@ export default function App() {
           ))}
         </div>
 
-        {/* Splash screen on first load */}
-        {!data && !error && <SplashScreen />}
+
 
         {/* Error */}
         {error && !loading && (
