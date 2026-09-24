@@ -7,29 +7,19 @@ const QUOTE_CACHE = {}
 const QUOTE_TTL = 120000
 
 // ── User ID — persisted in localStorage, syncs data to Sheet ─
-function getCookie(name) {
-  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))
-  return match ? match[2] : null
+function saveId(id) {
+  try { localStorage.setItem('mc_user_id', id) } catch(e) {}
+  document.cookie = 'mc_user_id=' + encodeURIComponent(id) + '; max-age=31536000; path=/; SameSite=Lax'
 }
 
-function setCookie(name, value) {
-  const expires = new Date()
-  expires.setFullYear(expires.getFullYear() + 2) // 2 years
-  document.cookie = name + '=' + value + '; expires=' + expires.toUTCString() + '; path=/; SameSite=Lax'
-}
-
-function getUserId() {
-  // Try localStorage first, then cookie fallback
+function getSavedId() {
   let id = null
   try { id = localStorage.getItem('mc_user_id') } catch(e) {}
-  if (!id) id = getCookie('mc_user_id')
   if (!id) {
-    id = 'u_' + Math.random().toString(36).slice(2) + Date.now().toString(36)
+    const m = document.cookie.match(/mc_user_id=([^;]+)/)
+    if (m) id = decodeURIComponent(m[1])
   }
-  // Save in both places
-  try { localStorage.setItem('mc_user_id', id) } catch(e) {}
-  setCookie('mc_user_id', id)
-  return id
+  return id || null
 }
 
 // ── JSONP helper ──────────────────────────────────────────────
@@ -603,7 +593,7 @@ function ImportIdSection({ onClose }) {
 }
 
 // ── User ID Badge ─────────────────────────────────────────────
-function UserIdBadge({ userId }) {
+function UserIdBadge({ userId, onReset }) {
   const [copied, setCopied] = useState(false)
   const [show, setShow] = useState(false)
 
@@ -658,6 +648,7 @@ function UserIdBadge({ userId }) {
             To sync on another device, copy your ID above, open the dashboard on that device, paste it below and click Apply.
           </div>
           <ImportIdSection onClose={() => setShow(false)} />
+          <button onClick={() => { onReset && onReset(); setShow(false) }} className="w-full mt-3 py-1.5 rounded border border-terminal-red/30 bg-terminal-red/10 text-[10px] font-mono text-terminal-red hover:bg-terminal-red/20 transition-all">Switch to different ID</button>
           <button onClick={() => setShow(false)} className="absolute top-3 right-3 text-slate-600 hover:text-slate-400 font-mono text-[12px]">✕</button>
         </div>
       )}
@@ -675,13 +666,22 @@ export default function CustomPortfolios({ onAnalyze }) {
   const [deleteConfirm,setDeleteConfirm]= useState(null)
   const [syncing,      setSyncing]      = useState(false)
   const [syncStatus,   setSyncStatus]   = useState('') // 'saved' | 'error' | ''
-  const userId = useRef(getUserId())
+  const [userId,  setUserId]  = useState(() => getSavedId())
+  const [pinInput, setPinInput] = useState('')
+  const [pinError, setPinError] = useState('')
   const saveTimer = useRef(null)
+
+  const applyId = (raw) => {
+    const clean = raw.trim().toLowerCase().replace(/[^a-z0-9_]/g, '')
+    if (clean.length < 3) { setPinError('At least 3 characters'); return }
+    const id = clean.startsWith('u_') ? clean : 'u_' + clean
+    saveId(id); setUserId(id); setPinError('')
+  }
 
   // Load from Sheet on mount
   useEffect(() => {
     setSyncing(true)
-    loadFromSheet(userId.current).then(data => {
+    loadFromSheet(userId).then(data => {
       if (data && data.length > 0) {
         setPortfolios(data)
         setActiveId(data[0].id)
@@ -709,7 +709,7 @@ export default function CustomPortfolios({ onAnalyze }) {
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(async () => {
       try {
-        await saveToSheet(userId.current, updated)
+        await saveToSheet(userId, updated)
         setSyncStatus('saved')
         setTimeout(() => setSyncStatus(''), 2000)
       } catch {
@@ -749,6 +749,38 @@ export default function CustomPortfolios({ onAnalyze }) {
     persistPortfolios(portfolios.map(p =>
       p.id === activeId ? { ...p, positions: p.positions.filter(pos => pos.ticker !== ticker) } : p
     ))
+  }
+
+
+  // Show setup screen if no ID saved
+  if (!userId) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 px-4 animate-fade-in">
+        <div className="panel-bright w-full max-w-sm p-6 space-y-5">
+          <div className="text-center">
+            <div className="font-display font-bold text-xl text-white mb-2">Set Your Portfolio ID</div>
+            <div className="font-mono text-[11px] text-slate-500 leading-relaxed">
+              Choose any name you remember. Type the same name on any device to access your portfolios.
+            </div>
+          </div>
+          <div>
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-500 mb-2">Your ID</label>
+            <input autoFocus value={pinInput}
+              onChange={e => { setPinInput(e.target.value); setPinError('') }}
+              onKeyDown={e => e.key === 'Enter' && applyId(pinInput)}
+              placeholder="e.g. michael, mc2026"
+              className="w-full bg-navy-800/60 border border-white/10 rounded px-4 py-3 text-[14px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-electric-500/40"
+            />
+            {pinError && <div className="font-mono text-[11px] text-terminal-red mt-1">{pinError}</div>}
+            <div className="font-mono text-[10px] text-slate-600 mt-1">Letters and numbers only, min 3 chars.</div>
+          </div>
+          <button onClick={() => applyId(pinInput)} disabled={!pinInput.trim()}
+            className="w-full btn-primary py-3 rounded font-mono text-[13px] font-semibold uppercase tracking-wider disabled:opacity-40">
+            Save & Continue →
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -793,7 +825,7 @@ export default function CustomPortfolios({ onAnalyze }) {
           {syncing && <span className="font-mono text-[10px] text-slate-600 uppercase tracking-wider animate-pulse">Syncing…</span>}
           {syncStatus === 'saved' && <span className="font-mono text-[10px] text-terminal-green uppercase tracking-wider">✓ Saved</span>}
           {syncStatus === 'error' && <span className="font-mono text-[10px] text-terminal-red uppercase tracking-wider">⚠ Sync failed</span>}
-          <UserIdBadge userId={userId.current} />
+          <UserIdBadge userId={userId} onReset={() => { saveId(''); setUserId(null); setPortfolios([]) }} />
         </div>
       </div>
 
