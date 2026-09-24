@@ -7,12 +7,28 @@ const QUOTE_CACHE = {}
 const QUOTE_TTL = 120000
 
 // ── User ID — persisted in localStorage, syncs data to Sheet ─
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))
+  return match ? match[2] : null
+}
+
+function setCookie(name, value) {
+  const expires = new Date()
+  expires.setFullYear(expires.getFullYear() + 2) // 2 years
+  document.cookie = name + '=' + value + '; expires=' + expires.toUTCString() + '; path=/; SameSite=Lax'
+}
+
 function getUserId() {
-  let id = localStorage.getItem('mc_user_id')
+  // Try localStorage first, then cookie fallback
+  let id = null
+  try { id = localStorage.getItem('mc_user_id') } catch(e) {}
+  if (!id) id = getCookie('mc_user_id')
   if (!id) {
     id = 'u_' + Math.random().toString(36).slice(2) + Date.now().toString(36)
-    localStorage.setItem('mc_user_id', id)
   }
+  // Save in both places
+  try { localStorage.setItem('mc_user_id', id) } catch(e) {}
+  setCookie('mc_user_id', id)
   return id
 }
 
@@ -210,14 +226,18 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
   const [sort, setSort]           = useState({ key: null, dir: 'desc' })
 
   useEffect(() => {
-    positions.forEach(async (p) => {
-      if (quotes[p.ticker]) return
-      setLoading(prev => new Set([...prev, p.ticker]))
-      const q = await fetchQuote(p.ticker)
-      if (q) setQuotes(prev => ({ ...prev, [p.ticker]: q }))
-      setLoading(prev => { const s = new Set(prev); s.delete(p.ticker); return s })
+    const missing = positions.filter(p => !quotes[p.ticker])
+    if (!missing.length) return
+    setLoading(new Set(missing.map(p => p.ticker)))
+    Promise.all(
+      missing.map(p => fetchQuote(p.ticker).then(q => ({ ticker: p.ticker, q })))
+    ).then(results => {
+      const newQuotes = {}
+      results.forEach(({ ticker, q }) => { if (q) newQuotes[ticker] = q })
+      setQuotes(prev => ({ ...prev, ...newQuotes }))
+      setLoading(new Set())
     })
-  }, [positions])
+  }, [positions.map(p => p.ticker).join(',')])
 
   const handleAdd = async () => {
     const t = addTicker.trim().toUpperCase()
@@ -345,14 +365,18 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
   const [sort, setSort]           = useState({ key: null, dir: 'desc' })
 
   useEffect(() => {
-    positions.forEach(async (p) => {
-      if (quotes[p.ticker]) return
-      setLoading(prev => new Set([...prev, p.ticker]))
-      const q = await fetchQuote(p.ticker)
-      if (q) setQuotes(prev => ({ ...prev, [p.ticker]: q }))
-      setLoading(prev => { const s = new Set(prev); s.delete(p.ticker); return s })
+    const missing = positions.filter(p => !quotes[p.ticker])
+    if (!missing.length) return
+    setLoading(new Set(missing.map(p => p.ticker)))
+    Promise.all(
+      missing.map(p => fetchQuote(p.ticker).then(q => ({ ticker: p.ticker, q })))
+    ).then(results => {
+      const newQuotes = {}
+      results.forEach(({ ticker, q }) => { if (q) newQuotes[ticker] = q })
+      setQuotes(prev => ({ ...prev, ...newQuotes }))
+      setLoading(new Set())
     })
-  }, [positions])
+  }, [positions.map(p => p.ticker).join(',')])
 
   const handleSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' })
 
@@ -526,7 +550,11 @@ function ImportIdSection({ onClose }) {
   const handleApply = () => {
     const id = val.trim()
     if (!id.startsWith('u_')) return
-    localStorage.setItem('mc_user_id', id)
+    try { localStorage.setItem('mc_user_id', id) } catch(e) {}
+    // Also save to cookie for Safari
+    const expires = new Date()
+    expires.setFullYear(expires.getFullYear() + 2)
+    document.cookie = 'mc_user_id=' + id + '; expires=' + expires.toUTCString() + '; path=/; SameSite=Lax'
     setApplied(true)
     setTimeout(() => {
       onClose()
