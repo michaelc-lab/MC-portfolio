@@ -8,40 +8,40 @@ import { fetchWorkstationData, fetchCompareData } from '../hooks/usePortfolioDat
 // ── InfoTip Component ─────────────────────────────────────────
 function InfoTip({ text, children }) {
   const [show, setShow] = React.useState(false)
-  const [pos, setPos] = React.useState({ top: 0, left: 0 })
-  const ref = React.useRef(null)
-
-  const handleMouseEnter = () => {
-    if (ref.current) {
-      const rect = ref.current.getBoundingClientRect()
-      setPos({
-        top: rect.bottom + window.scrollY + 6,
-        left: Math.min(rect.left + window.scrollX, window.innerWidth - 280),
-      })
-    }
-    setShow(true)
-  }
-
   return (
-    <span ref={ref} className="relative inline-flex items-center"
-      onMouseEnter={handleMouseEnter} onMouseLeave={() => setShow(false)}>
+    <span className="relative inline-flex items-center"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}>
       {children}
-      <span className="ml-1 text-slate-600 hover:text-slate-400 cursor-help text-[10px]">ⓘ</span>
+      <span className="ml-1 text-slate-600 hover:text-electric-400 cursor-help text-[10px] select-none">ⓘ</span>
       {show && (
         <div style={{
-          position: 'fixed',
-          top: pos.top,
-          left: pos.left,
+          position: 'absolute',
+          bottom: 'calc(100% + 8px)',
+          left: '50%',
+          transform: 'translateX(-50%)',
           zIndex: 9999,
           width: 260,
           background: '#0a1628',
-          border: '1px solid rgba(14,165,233,0.3)',
+          border: '1px solid rgba(14,165,233,0.35)',
           borderRadius: 8,
           padding: '10px 12px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
           pointerEvents: 'none',
         }}>
-          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}
+          {/* Arrow */}
+          <div style={{
+            position: 'absolute',
+            bottom: -5,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 8, height: 8,
+            background: '#0a1628',
+            border: '1px solid rgba(14,165,233,0.35)',
+            borderTop: 'none', borderLeft: 'none',
+            transform: 'translateX(-50%) rotate(45deg)',
+          }} />
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#94a3b8', lineHeight: 1.7 }}
             dangerouslySetInnerHTML={{ __html: text }} />
         </div>
       )}
