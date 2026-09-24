@@ -61,8 +61,9 @@ export default function App() {
           ))}
         </div>
 
-        {/* Loading skeleton */}
+        {/* Loading skeleton — show immediately on first load */}
         {loading && !data && <LoadingSkeleton isMobile={isMobile} />}
+        {!loading && !data && !error && <LoadingSkeleton isMobile={isMobile} />}
 
         {/* Error */}
         {error && !loading && (
