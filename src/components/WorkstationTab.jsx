@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Shield } from 'lucide-react'
+import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Shield, Sparkles } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
 import { fetchWorkstationData, fetchCompareData } from '../hooks/usePortfolioData'
@@ -413,6 +413,9 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [loading,     setLoading]     = useState(false)
   const [error,       setError]       = useState(null)
   const [chartPeriod, setChartPeriod] = useState('1Y')
+  const [aiSummary,   setAiSummary]   = useState(null)
+  const [aiLoading,   setAiLoading]   = useState(false)
+  const [aiError,     setAiError]     = useState(null)
   const hasAutoRun = useRef(false)
 
   const run = async (t) => {
@@ -432,6 +435,30 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  const fetchAISummary = async () => {
+    if (!data) return
+    setAiLoading(true); setAiError(null)
+    try {
+      const payload = {
+        profile: data.profile,
+        metrics: data.metrics,
+        fairValue: data.fairValue,
+        margins: data.margins,
+        growth: data.growth,
+        riskProfile: data.riskProfile,
+        earnings: data.earnings,
+        analyst: data.analyst,
+        priceTargets: data.priceTargets,
+        insiders: data.insiders,
+      }
+      const encoded = encodeURIComponent(JSON.stringify(payload))
+      const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(data.ticker) + '&data=' + encoded)
+      if (result.error) setAiError(result.error)
+      else setAiSummary(result.summary)
+    } catch(e) { setAiError(e.message) }
+    finally { setAiLoading(false) }
   }
 
   useEffect(() => {
@@ -905,6 +932,48 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                 )
               })() : <div className="font-mono text-[11px] text-slate-600">No growth data</div>}
             </div>
+          </div>
+
+          {/* AI Summary */}
+          <div className="panel p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Sparkles size={14} className="text-electric-400" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">AI Investment Summary</span>
+                <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">Claude Haiku · ~$0.002</span>
+              </div>
+              {!aiSummary && !aiLoading && (
+                <button onClick={fetchAISummary}
+                  className="flex items-center gap-2 px-4 py-2 rounded border border-electric-500/30 bg-electric-500/10 text-electric-400 text-[11px] font-mono uppercase tracking-wider hover:border-electric-500/50 hover:bg-electric-500/15 transition-all">
+                  <Sparkles size={11} /> Generate Summary
+                </button>
+              )}
+              {aiSummary && (
+                <button onClick={() => { setAiSummary(null) }}
+                  className="text-[10px] font-mono text-slate-600 hover:text-slate-400 transition-colors">
+                  Regenerate
+                </button>
+              )}
+            </div>
+            {aiLoading && (
+              <div className="flex items-center gap-3 py-4">
+                <div className="w-5 h-5 rounded-full border-2 border-electric-500/30 border-t-electric-500 animate-spin flex-shrink-0" />
+                <div className="font-mono text-[12px] text-slate-500 animate-pulse">Analyzing {data?.ticker} with Claude AI...</div>
+              </div>
+            )}
+            {aiError && (
+              <div className="font-mono text-[11px] text-terminal-red py-2">{aiError}</div>
+            )}
+            {aiSummary && (
+              <div className="font-mono text-[12px] text-slate-300 leading-relaxed whitespace-pre-wrap border-l-2 border-electric-500/30 pl-4">
+                {aiSummary}
+              </div>
+            )}
+            {!aiSummary && !aiLoading && !aiError && (
+              <div className="font-mono text-[11px] text-slate-600 text-center py-4">
+                Click "Generate Summary" to get an AI-powered investment thesis based on all the data above.
+              </div>
+            )}
           </div>
 
           {/* News */}
