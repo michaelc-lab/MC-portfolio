@@ -423,7 +423,7 @@ const FACTOR_TIPS = {
 
 const mcColor = s => s == null ? '#475569' : s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
 
-function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onGenerate }) {
+const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onGenerate }) {
   const [openKey, setOpenKey] = useState(null)
   const [showTrack, setShowTrack] = useState(false)
   const [track, setTrack] = useState(null)
@@ -618,7 +618,15 @@ function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onG
       </div>
     </div>
   )
-}
+}, (prev, next) => {
+  // Only re-render when meaningful props change
+  return prev.mc === next.mc &&
+         prev.ticker === next.ticker &&
+         prev.isMobile === next.isMobile &&
+         prev.aiSummary === next.aiSummary &&
+         prev.aiLoading === next.aiLoading &&
+         prev.aiError === next.aiError
+})
 
 // ── Analyze view ──────────────────────────────────────────────
 function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
@@ -654,7 +662,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
     }
   }
 
-  const fetchAISummary = async () => {
+  const fetchAISummary = React.useCallback(async () => {
     if (!data) return
     setAiLoading(true); setAiError(null)
     try {
@@ -663,7 +671,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
       else setAiSummary(result.summary)
     } catch (e) { setAiError(e.message) }
     finally { setAiLoading(false) }
-  }
+  }, [data])
 
   useEffect(() => {
     if (initialTicker && !hasAutoRun.current) {
@@ -707,7 +715,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
       {loading && <div className="panel p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-electric-400 animate-pulse">Fetching fundamentals & news…</div>}
 
       {data && !loading && (
-        <div className="space-y-4 animate-slide-up">
+        <div className="space-y-4 animate-slide-up" style={{willChange: "contents"}}>
           {/* Header */}
           <div className="panel-bright p-5">
             <div className="flex items-center gap-4 flex-wrap">
