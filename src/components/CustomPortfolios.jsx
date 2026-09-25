@@ -418,16 +418,6 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
         </button>
       </div>
 
-      {/* DEBUG — remove after testing */}
-      <div className="panel p-3 mb-2 font-mono text-[10px] text-slate-500 space-y-1">
-        <div>Positions: {positions.length} | Quotes loaded: {Object.keys(quotes).length} | Loading: {loading.size}</div>
-        <div>UserID: {typeof window !== 'undefined' ? (localStorage.getItem('mc_user_id') || 'NOT SET') : '—'}</div>
-        <div>URL: {APPS_SCRIPT_URL.substring(0, 60)}...</div>
-        {Object.keys(quotes).length === 0 && positions.length > 0 && (
-          <div className="text-terminal-red">⚠ No quotes loaded yet — API may be failing</div>
-        )}
-      </div>
-
       {positions.length === 0 ? (
         <div className="panel p-12 text-center">
           <DollarSign size={24} className="text-slate-700 mx-auto mb-3" />
