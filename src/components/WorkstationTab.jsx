@@ -819,7 +819,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
       {loading && <div className="panel p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-electric-400 animate-pulse">Fetching fundamentals & news…</div>}
 
       {data && !loading && (
-        <div className="space-y-4 animate-slide-up" style={{willChange: "contents"}}>
+        <div className="space-y-4 animate-slide-up">
           {/* Header */}
           <div className="panel-bright p-5">
             <div className="flex items-center gap-4 flex-wrap">
