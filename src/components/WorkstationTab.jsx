@@ -414,6 +414,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [error,       setError]       = useState(null)
   const [chartPeriod, setChartPeriod] = useState('1Y')
   const [aiSummary,   setAiSummary]   = useState(null)
+  const [aiScore,     setAiScore]     = useState(null)
   const [aiLoading,   setAiLoading]   = useState(false)
   const [aiError,     setAiError]     = useState(null)
   const hasAutoRun = useRef(false)
@@ -456,7 +457,15 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
       const encoded = encodeURIComponent(JSON.stringify(payload))
       const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(data.ticker) + '&data=' + encoded)
       if (result.error) setAiError(result.error)
-      else setAiSummary(result.summary)
+      else {
+        setAiSummary(result.summary)
+        // Extract score from summary if present
+        const scoreMatch = result.summary.match(/score[:\s]+([0-9](?:\.[0-9])?)\/10/i) ||
+                           result.summary.match(/\b([0-9](?:\.[0-9])?)\s*\/\s*10\b/) ||
+                           result.summary.match(/score[:\s]+([0-9]+)/i)
+        if (scoreMatch) setAiScore(parseFloat(scoreMatch[1]))
+        else if (result.score != null) setAiScore(result.score)
+      }
     } catch(e) { setAiError(e.message) }
     finally { setAiLoading(false) }
   }
@@ -601,6 +610,74 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                 }
               </div>
             </div>
+          </div>
+
+          {/* AI Investment Summary — between chart and indicators */}
+          <div className="panel p-5">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles size={14} className="text-electric-400" />
+                <span className="font-display font-semibold text-[13px] text-slate-200">AI Investment Summary</span>
+                <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">Claude Haiku · ~$0.002/click</span>
+              </div>
+              <div className="flex items-center gap-3">
+                {aiSummary && aiScore != null && (
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-slate-500 uppercase tracking-wider">Score</span>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-32 h-2 bg-navy-800 rounded overflow-hidden border border-white/10">
+                        <div style={{
+                          width: (aiScore * 10) + '%',
+                          height: '100%',
+                          background: aiScore >= 7 ? '#00ff88' : aiScore >= 4 ? '#ffb800' : '#ff4466',
+                          borderRadius: 4,
+                          transition: 'width 0.8s ease',
+                        }} />
+                      </div>
+                      <span style={{
+                        color: aiScore >= 7 ? '#00ff88' : aiScore >= 4 ? '#ffb800' : '#ff4466',
+                        fontFamily: 'IBM Plex Mono', fontWeight: 700, fontSize: 16,
+                      }}>{aiScore}<span style={{fontSize:10, color:'#475569'}}>/10</span></span>
+                      <span style={{
+                        fontFamily: 'IBM Plex Mono', fontSize: 10,
+                        color: aiScore >= 7 ? '#00ff88' : aiScore >= 4 ? '#ffb800' : '#ff4466',
+                      }}>
+                        {aiScore >= 8 ? 'Strong Buy' : aiScore >= 6 ? 'Buy' : aiScore >= 4 ? 'Hold' : aiScore >= 2 ? 'Sell' : 'Strong Sell'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {!aiSummary && !aiLoading && (
+                  <button onClick={fetchAISummary}
+                    className="flex items-center gap-2 px-4 py-2 rounded border border-electric-500/30 bg-electric-500/10 text-electric-400 text-[11px] font-mono uppercase tracking-wider hover:border-electric-500/50 hover:bg-electric-500/15 transition-all">
+                    <Sparkles size={11} /> Generate
+                  </button>
+                )}
+                {aiSummary && (
+                  <button onClick={() => { setAiSummary(null); setAiScore(null) }}
+                    className="text-[10px] font-mono text-slate-600 hover:text-slate-400 transition-colors">
+                    Regenerate
+                  </button>
+                )}
+              </div>
+            </div>
+            {aiLoading && (
+              <div className="flex items-center gap-3 py-3">
+                <div className="w-4 h-4 rounded-full border-2 border-electric-500/30 border-t-electric-500 animate-spin flex-shrink-0" />
+                <div className="font-mono text-[12px] text-slate-500 animate-pulse">Claude is analyzing {data?.ticker}…</div>
+              </div>
+            )}
+            {aiError && <div className="font-mono text-[11px] text-terminal-red py-2">{aiError}</div>}
+            {aiSummary && (
+              <div className="font-mono text-[12px] text-slate-300 leading-relaxed whitespace-pre-wrap border-l-2 border-electric-500/30 pl-4">
+                {aiSummary}
+              </div>
+            )}
+            {!aiSummary && !aiLoading && !aiError && (
+              <div className="font-mono text-[11px] text-slate-600 py-1">
+                Click Generate for an AI-powered investment thesis (score 0–10 + 3-paragraph analysis).
+              </div>
+            )}
           </div>
 
           {/* Phase 1: Earnings Quality + Price Targets + Insider Activity */}
@@ -932,48 +1009,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                 )
               })() : <div className="font-mono text-[11px] text-slate-600">No growth data</div>}
             </div>
-          </div>
-
-          {/* AI Summary */}
-          <div className="panel p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Sparkles size={14} className="text-electric-400" />
-                <span className="font-display font-semibold text-[13px] text-slate-200">AI Investment Summary</span>
-                <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">Claude Haiku · ~$0.002</span>
-              </div>
-              {!aiSummary && !aiLoading && (
-                <button onClick={fetchAISummary}
-                  className="flex items-center gap-2 px-4 py-2 rounded border border-electric-500/30 bg-electric-500/10 text-electric-400 text-[11px] font-mono uppercase tracking-wider hover:border-electric-500/50 hover:bg-electric-500/15 transition-all">
-                  <Sparkles size={11} /> Generate Summary
-                </button>
-              )}
-              {aiSummary && (
-                <button onClick={() => { setAiSummary(null) }}
-                  className="text-[10px] font-mono text-slate-600 hover:text-slate-400 transition-colors">
-                  Regenerate
-                </button>
-              )}
-            </div>
-            {aiLoading && (
-              <div className="flex items-center gap-3 py-4">
-                <div className="w-5 h-5 rounded-full border-2 border-electric-500/30 border-t-electric-500 animate-spin flex-shrink-0" />
-                <div className="font-mono text-[12px] text-slate-500 animate-pulse">Analyzing {data?.ticker} with Claude AI...</div>
-              </div>
-            )}
-            {aiError && (
-              <div className="font-mono text-[11px] text-terminal-red py-2">{aiError}</div>
-            )}
-            {aiSummary && (
-              <div className="font-mono text-[12px] text-slate-300 leading-relaxed whitespace-pre-wrap border-l-2 border-electric-500/30 pl-4">
-                {aiSummary}
-              </div>
-            )}
-            {!aiSummary && !aiLoading && !aiError && (
-              <div className="font-mono text-[11px] text-slate-600 text-center py-4">
-                Click "Generate Summary" to get an AI-powered investment thesis based on all the data above.
-              </div>
-            )}
           </div>
 
           {/* News */}
