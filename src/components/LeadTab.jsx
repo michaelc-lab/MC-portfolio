@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { TrendingUp, TrendingDown, Zap, AlertTriangle, Activity, Calendar } from 'lucide-react'
+import { TrendingUp, TrendingDown, Zap, AlertTriangle, Activity, Calendar, Sparkles } from 'lucide-react'
 import { fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwUQqqI6PAa64xq5ZALeJSUWuy86pVtSEG6rIMhgNOQ-7XS-t7PJRRncJ1mi7OAwd0/exec'
@@ -60,7 +60,7 @@ function MarketStatus() {
 }
 
 // ── KPI card ──────────────────────────────────────────────────
-function KpiCard({ label, value, sub, color = 'accent', icon: Icon, onClick, clickable }) {
+function KpiCard({ label, value, sub, color = 'accent', icon: Icon, onClick, clickable, isMobile }) {
   const colorMap = {
     accent: 'text-electric-400',
     green:  'text-terminal-green',
@@ -70,18 +70,19 @@ function KpiCard({ label, value, sub, color = 'accent', icon: Icon, onClick, cli
   return (
     <div
       onClick={onClick}
-      className={`panel p-5 relative overflow-hidden transition-all ${clickable ? 'cursor-pointer hover:border-electric-500/40 hover:bg-electric-500/[0.04]' : 'hover:border-electric-500/25'}`}
+      className={`panel relative overflow-hidden transition-all ${isMobile ? 'p-3' : 'p-5'} ${clickable ? 'cursor-pointer hover:border-electric-500/40 hover:bg-electric-500/[0.04]' : 'hover:border-electric-500/25'}`}
     >
       <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-electric-500/30 to-transparent" />
-      <div className="flex items-start justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">{label}</span>
-        <div className="flex items-center gap-2">
-          {clickable && <span className="text-[9px] font-mono text-slate-600 uppercase tracking-wider">click to view</span>}
-          {Icon && <Icon size={14} className="text-slate-600" />}
+      <div className={`flex items-start justify-between ${isMobile ? 'mb-1.5' : 'mb-3'}`}>
+        <span className={`font-mono uppercase tracking-[0.15em] text-slate-500 ${isMobile ? 'text-[9px]' : 'text-[10px]'}`}>{label}</span>
+        <div className="flex items-center gap-1">
+          {clickable && !isMobile && <span className="text-[9px] font-mono text-slate-600 uppercase tracking-wider">click to view</span>}
+          {clickable && isMobile && <span className="text-[8px] font-mono text-slate-600">tap</span>}
+          {Icon && <Icon size={isMobile ? 11 : 14} className="text-slate-600" />}
         </div>
       </div>
-      <div className={`font-display font-bold text-4xl leading-none ${colorMap[color]} drop-shadow-lg`}>{value}</div>
-      {sub && <div className="mt-2 text-[11px] font-mono text-slate-600">{sub}</div>}
+      <div className={`font-display font-bold leading-none ${colorMap[color]} drop-shadow-lg ${isMobile ? 'text-3xl' : 'text-4xl'}`}>{value}</div>
+      {sub && <div className={`font-mono text-slate-600 mt-1 ${isMobile ? 'text-[9px]' : 'text-[11px]'}`}>{sub}</div>}
     </div>
   )
 }
@@ -334,7 +335,7 @@ function UpcomingEarnings() {
 
 
 // ── Sector Pulse ──────────────────────────────────────────────
-function SectorPulse({ portfolio }) {
+function SectorPulse({ portfolio, isMobile }) {
   // Group by sector, compute average daily change per sector
   const sectorMap = {}
   portfolio.forEach(r => {
@@ -352,10 +353,10 @@ function SectorPulse({ portfolio }) {
   const worst = sectors[sectors.length - 1]
 
   return (
-    <div className="panel p-5 relative overflow-hidden group hover:border-electric-500/25 transition-all">
+    <div className={`panel relative overflow-hidden group hover:border-electric-500/25 transition-all ${isMobile ? 'p-3' : 'p-5'}`}>
       <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-electric-500/30 to-transparent" />
-      <div className="flex items-start justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">Sector Pulse</span>
+      <div className={`flex items-start justify-between ${isMobile ? 'mb-1.5' : 'mb-3'}`}>
+        <span className={`font-mono uppercase tracking-[0.15em] text-slate-500 ${isMobile ? 'text-[9px]' : 'text-[10px]'}`}>Sector Pulse</span>
         <TrendingUp size={14} className="text-slate-600" />
       </div>
       {best && (
@@ -364,7 +365,7 @@ function SectorPulse({ portfolio }) {
           <div className="flex items-center justify-between">
             <div>
               <div className="font-mono text-[9px] uppercase tracking-wider text-slate-600 mb-0.5">Leading</div>
-              <div className="font-display font-bold text-[15px] text-white leading-tight">{best.name}</div>
+              <div className={`font-display font-bold text-white leading-tight ${isMobile ? 'text-[13px]' : 'text-[15px]'}`}>{best.name}</div>
             </div>
             <div className="font-mono font-bold text-[22px] text-terminal-green">{fmtPct(best.avg)}</div>
           </div>
@@ -374,9 +375,9 @@ function SectorPulse({ portfolio }) {
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-mono text-[9px] uppercase tracking-wider text-slate-600 mb-0.5">Lagging</div>
-                <div className="font-display font-semibold text-[13px] text-slate-400 leading-tight">{worst.name}</div>
+                <div className={`font-display font-semibold text-slate-400 leading-tight ${isMobile ? 'text-[11px]' : 'text-[13px]'}`}>{worst.name}</div>
               </div>
-              <div className="font-mono font-semibold text-[16px] text-terminal-red">{fmtPct(worst.avg)}</div>
+              <div className={`font-mono font-semibold text-terminal-red ${isMobile ? 'text-[13px]' : 'text-[16px]'}`}>{fmtPct(worst.avg)}</div>
             </div>
           )}
         </div>
@@ -386,6 +387,81 @@ function SectorPulse({ portfolio }) {
 }
 
 // ── Main export ───────────────────────────────────────────────
+// ── MC Score Leaders — whole universe, rescored automatically every day ──
+const lbColor = s => s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
+const LB_REGIME = { 'risk-off': ['#ff4466', 'Risk-off'], 'neutral': ['#ffb800', 'Neutral'], 'risk-on': ['#00ff88', 'Risk-on'] }
+
+function LeaderRow({ r, i, onAnalyze, isMobile }) {
+  const c = lbColor(r.score)
+  return (
+    <button onClick={() => onAnalyze && onAnalyze(r.ticker)}
+      className="w-full flex items-center gap-3 px-4 py-2 border-b border-white/5 last:border-0 hover:bg-electric-500/[0.04] transition-colors text-left">
+      <span className="font-mono text-[10px] text-slate-600 w-4 text-right flex-shrink-0">{i + 1}</span>
+      <span className="font-mono font-bold text-[13px] text-electric-300 w-16 flex-shrink-0">{r.ticker}</span>
+      {!isMobile && <span className="font-mono text-[11px] text-slate-500 truncate flex-1 min-w-0">{r.signal || r.name}</span>}
+      <span className="flex items-center gap-2 flex-shrink-0 ml-auto">
+        {!isMobile && r.low !== '' && r.high !== '' && <span className="font-mono text-[9px] text-slate-600">{Number(r.low).toFixed(1)}–{Number(r.high).toFixed(1)}</span>}
+        <span style={{ color: c, borderColor: c + '55', background: c + '14' }} className="font-mono text-[12px] font-bold px-2 py-0.5 rounded border w-12 text-center">{Number(r.score).toFixed(1)}</span>
+        <span style={{ color: c }} className="font-mono text-[10px] w-[72px] text-right">{r.label}</span>
+      </span>
+    </button>
+  )
+}
+
+function ScoreLeaders({ onAnalyze, isMobile }) {
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState(null)
+  const fetched = useRef(false)
+
+  useEffect(() => {
+    if (fetched.current) return
+    fetched.current = true
+    jsonp(`${APPS_SCRIPT_URL}?action=getScoreLeaders`)
+      .then(d => setData(d))
+      .catch(e => setErr(e.message))
+  }, [])
+
+  const reg = data && data.regime ? (LB_REGIME[data.regime.regime] || LB_REGIME.neutral) : null
+  const updated = data && data.updated ? new Date(data.updated).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : null
+
+  return (
+    <div className="panel overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-electric-400" />
+          <span className="font-display font-semibold text-[13px] text-slate-200">MC Score Leaders</span>
+          {reg && <span style={{ color: reg[0], borderColor: reg[0] + '55', background: reg[0] + '14' }} className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border">{reg[1]}</span>}
+        </div>
+        <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600">
+          {data ? `${data.scored}/${data.universe} scored${updated ? ' · ' + updated : ''}` : 'Your universe · daily'}
+        </span>
+      </div>
+      {!data && !err && <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider animate-pulse">Loading scores…</div>}
+      {err && <div className="p-6 text-center font-mono text-[11px] text-terminal-red">{err}</div>}
+      {data && data.scored === 0 && (
+        <div className="p-6 text-center font-mono text-[11px] text-slate-500 leading-relaxed">
+          No scores yet. Once the background scorer is installed, your whole universe is scored automatically —
+          or analyze any stock in Workstation to add it now.
+        </div>
+      )}
+      {data && data.scored > 0 && (
+        <div className={`grid ${isMobile || !data.bottom.length ? 'grid-cols-1' : 'grid-cols-2'} divide-white/5 ${isMobile ? '' : 'divide-x'}`}>
+          <div>
+            <div className="px-4 pt-2 pb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-terminal-green">▲ Highest scores</div>
+            {data.top.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} />)}
+          </div>
+          {data.bottom.length > 0 && (
+            <div>
+              <div className="px-4 pt-2 pb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-terminal-red">▼ Weakest — review these</div>
+              {data.bottom.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
   const withDay    = portfolio.filter(r => r.dayChangePct != null)
   const withWeek   = portfolio.filter(r => r.weekChangePct != null)
@@ -400,13 +476,16 @@ export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
     <div className="space-y-5 animate-fade-in">
       {/* KPIs */}
       <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-3'}`}>
-        <SectorPulse portfolio={portfolio} />
+        <SectorPulse portfolio={portfolio} isMobile={isMobile} />
         <KpiCard label="At ATH" value={atATH.length} sub="within 0.5% of high" color="green" icon={Zap}
-          clickable onClick={() => setModal('ath')} />
+          clickable onClick={() => setModal('ath')} isMobile={isMobile} />
         <KpiCard label="Deep Discount" value={deepDisc.length} sub=">50% off ATH" color="red" icon={AlertTriangle}
-          clickable onClick={() => setModal('discount')} />
+          clickable onClick={() => setModal('discount')} isMobile={isMobile} />
       </div>
 
+
+      {/* MC Score Leaders */}
+      <ScoreLeaders onAnalyze={onAnalyze} isMobile={isMobile} />
 
       {/* Daily movers */}
       <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
