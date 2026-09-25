@@ -423,6 +423,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
     const target = (t || ticker || selectVal || '').trim().toUpperCase()
     if (!target) return
     setLoading(true); setError(null); setData(null); setRevenueData(null); setChartPeriod('1Y')
+    setAiSummary(null); setAiScore(null); setAiError(null)
     try {
       const d = await fetchWorkstationData(target)
       if (!d?.profile?.name) throw new Error('No data for "' + target + '" — may not be on Finnhub free tier')
