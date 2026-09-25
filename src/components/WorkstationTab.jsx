@@ -458,13 +458,18 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
       const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(data.ticker) + '&data=' + encoded)
       if (result.error) setAiError(result.error)
       else {
-        setAiSummary(result.summary)
-        // Extract score from summary if present
-        const scoreMatch = result.summary.match(/score[:\s]+([0-9](?:\.[0-9])?)\/10/i) ||
-                           result.summary.match(/\b([0-9](?:\.[0-9])?)\s*\/\s*10\b/) ||
-                           result.summary.match(/score[:\s]+([0-9]+)/i)
-        if (scoreMatch) setAiScore(parseFloat(scoreMatch[1]))
-        else if (result.score != null) setAiScore(result.score)
+        // Extract score from first line
+        const lines = (result.summary || '').split('\n')
+        const firstLine = lines[0] || ''
+        const scoreMatch = firstLine.match(/([0-9](?:\.[0-9])?)\/10/) ||
+                           (result.summary || '').match(/Score:\s*([0-9](?:\.[0-9])?)\/10/i)
+        const score = scoreMatch ? parseFloat(scoreMatch[1]) : result.score
+        if (score != null) setAiScore(score)
+        // Remove score line from displayed text
+        const body = scoreMatch && lines[0].match(/^Score:/i)
+          ? lines.slice(1).join('\n').trim()
+          : result.summary
+        setAiSummary(body)
       }
     } catch(e) { setAiError(e.message) }
     finally { setAiLoading(false) }
