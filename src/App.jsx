@@ -113,9 +113,18 @@ function LoadingSkeleton({ isMobile }) {
 export default function App() {
   const { data, loading, error, lastUpdated, refresh } = usePortfolioData()
 
-  // Hide the HTML splash screen as soon as React renders
+  // Hide splash only when data is ready or after 30 seconds max
   React.useEffect(() => {
-    if (window.__hideSplash) window.__hideSplash()
+    if (data || error) {
+      if (window.__hideSplash) window.__hideSplash()
+    }
+  }, [data, error])
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      if (window.__hideSplash) window.__hideSplash()
+    }, 30000)
+    return () => clearTimeout(timer)
   }, [])
   const { isMobile, isSmall } = useDevice()
   const [tab, setTab] = useState('lead')
