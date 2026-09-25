@@ -628,10 +628,41 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
          prev.aiError === next.aiError
 })
 
+// ── Stock Selector — isolated so typing doesn't re-render the score panel ──
+const StockSelector = React.memo(function StockSelector({ allStocks, loading, onRun }) {
+  const [ticker,   setTicker]   = React.useState('')
+  const [selectVal,setSelectVal]= React.useState('')
+
+  const handleRun = () => {
+    const t = (ticker || selectVal || '').trim().toUpperCase()
+    if (t) onRun(t)
+  }
+
+  // Sync select back to empty when parent resets
+  return (
+    <div className="flex gap-2 flex-wrap items-center">
+      <select value={selectVal} onChange={e => { setSelectVal(e.target.value); setTicker('') }}
+        className="bg-navy-800/60 border border-white/10 rounded px-3 py-2.5 text-[12px] font-mono text-slate-400 focus:outline-none focus:border-electric-500/40 flex-1 min-w-48 appearance-none cursor-pointer">
+        <option value="">— Pick from my list —</option>
+        {allStocks.map(r => <option key={r.ticker} value={r.ticker}>{r.ticker} — {r.company}</option>)}
+      </select>
+      <div className="relative flex-1 min-w-48">
+        <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
+        <input value={ticker} onChange={e => { setTicker(e.target.value.toUpperCase()); setSelectVal('') }}
+          onKeyDown={e => e.key === 'Enter' && handleRun()}
+          placeholder="…or type any US ticker (NVDA, AAPL)"
+          className="w-full bg-navy-800/60 border border-white/10 rounded px-8 py-2.5 text-[12px] font-mono text-slate-300 placeholder-slate-600 focus:outline-none focus:border-electric-500/40" />
+      </div>
+      <button onClick={handleRun} disabled={loading}
+        className="btn-primary px-5 py-2.5 rounded font-mono text-[12px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2">
+        <BarChart2 size={13} />{loading ? 'Loading…' : 'Analyze'}
+      </button>
+    </div>
+  )
+})
+
 // ── Analyze view ──────────────────────────────────────────────
 function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
-  const [ticker,      setTicker]      = useState('')
-  const [selectVal,   setSelectVal]   = useState('')
   const [data,        setData]        = useState(null)
   const [revenueData, setRevenueData] = useState(null)
   const [loading,     setLoading]     = useState(false)
@@ -643,7 +674,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const hasAutoRun = useRef(false)
 
   const run = async (t) => {
-    const target = (t || ticker || selectVal || '').trim().toUpperCase()
+    const target = (t || '').trim().toUpperCase()
     if (!target) return
     setLoading(true); setError(null); setData(null); setRevenueData(null); setChartPeriod('1Y')
     setAiSummary(null); setAiError(null)
@@ -691,25 +722,12 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
 
   return (
     <div className="space-y-4">
-      {/* Selector bar */}
-      <div className="flex gap-2 flex-wrap items-center">
-        <select value={selectVal} onChange={e => { setSelectVal(e.target.value); setTicker('') }}
-          className="bg-navy-800/60 border border-white/10 rounded px-3 py-2.5 text-[12px] font-mono text-slate-400 focus:outline-none focus:border-electric-500/40 flex-1 min-w-48 appearance-none cursor-pointer">
-          <option value="">— Pick from my list —</option>
-          {allStocks.map(r => <option key={r.ticker} value={r.ticker}>{r.ticker} — {r.company}</option>)}
-        </select>
-        <div className="relative flex-1 min-w-48">
-          <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
-          <input value={ticker} onChange={e => { setTicker(e.target.value); setSelectVal('') }}
-            onKeyDown={e => e.key === 'Enter' && run()}
-            placeholder="…or type any US ticker (NVDA, AAPL)"
-            className="w-full bg-navy-800/60 border border-white/10 rounded px-8 py-2.5 text-[12px] font-mono text-slate-300 placeholder-slate-600 focus:outline-none focus:border-electric-500/40" />
-        </div>
-        <button onClick={() => run()} disabled={loading}
-          className="btn-primary px-5 py-2.5 rounded font-mono text-[12px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2">
-          <BarChart2 size={13} />{loading ? 'Loading…' : 'Analyze'}
-        </button>
-      </div>
+      {/* Selector bar — isolated to prevent score panel flicker */}
+      <StockSelector
+        allStocks={allStocks}
+        loading={loading}
+        onRun={run}
+      />
 
       {error   && <div className="panel p-4 border-red-500/20 bg-red-500/5 text-[12px] font-mono text-red-400">{error}</div>}
       {loading && <div className="panel p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-electric-400 animate-pulse">Fetching fundamentals & news…</div>}
