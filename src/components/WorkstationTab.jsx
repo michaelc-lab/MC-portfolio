@@ -404,6 +404,222 @@ function DualChart({ chartA, chartB, tickerA, tickerB }) {
   )
 }
 
+// ── MC Score panel ────────────────────────────────────────────
+const MC_SCORE_TIP = `<b>MC Score (0–10)</b> — computed by a fixed-rule model across 7 research-backed factors. AI does not pick the number.<br/><br/>
+  🟢 8–10 Strong Buy · 6.5–8 Buy<br/>
+  🟡 4.5–6.5 Hold<br/>
+  🔴 3–4.5 Sell · 0–3 Strong Sell<br/><br/>
+  <i>Confidence = how much real data backs the score. Open Track Record to see whether high scores actually beat the S&amp;P 500.</i>`
+
+const FACTOR_TIPS = {
+  momentum: `<b>Momentum &amp; Trend · 20%</b><br/>Stocks that rose over the past 12 months (skipping the latest month) tend to keep outperforming for 3–12 months — one of the most replicated effects in finance (Jegadeesh &amp; Titman, 1993).<br/><br/><i>Also checks price vs the 200-day average and the 50/200-day trend.</i>`,
+  value: `<b>Value · 17%</b><br/>Cheap stocks outperform expensive ones over long horizons (Fama &amp; French).<br/>Combines Eulerpool fair value, PEG (P/E ÷ earnings growth) and analyst targets.<br/><br/><i>Analyst targets are ~10% too optimistic on average, so the model discounts them.</i>`,
+  quality: `<b>Quality · 18%</b><br/>Highly profitable companies earn higher returns (Novy-Marx, 2013).<br/>Gross &amp; net margin, return on equity, margin trend and debt/equity.<br/><br/><i>Expanding margins weigh heavily — they signal pricing power.</i>`,
+  growth: `<b>Growth · 12%</b><br/>Annual revenue &amp; earnings compounding over 3 years, plus the latest 12-month revenue growth to catch acceleration or slowdown.`,
+  earnings: `<b>Earnings Surprises · 13%</b><br/>Stocks that beat estimates keep drifting up for weeks after the report — "post-earnings drift" (Bernard &amp; Thomas, 1989).<br/>Beat rate, average surprise and the latest surprise.`,
+  smart: `<b>Smart Money · 12%</b><br/>Insider open-market <b>purchases</b> predict returns (Lakonishok &amp; Lee, 2001) — especially several insiders buying together.<br/>Insider <b>sales</b> count only lightly (often taxes or diversification).<br/><br/><i>Also tracks whether analysts are upgrading or downgrading.</i>`,
+  risk: `<b>Risk · 8%</b><br/>Lower-volatility stocks have historically delivered better risk-adjusted returns (Frazzini &amp; Pedersen, 2014).<br/>Volatility, max drawdown and Sharpe ratio.`,
+}
+
+const mcColor = s => s == null ? '#475569' : s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
+
+function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onGenerate }) {
+  const [openKey, setOpenKey] = useState(null)
+  const [showTrack, setShowTrack] = useState(false)
+  const [track, setTrack] = useState(null)
+  const [trackLoading, setTrackLoading] = useState(false)
+
+  if (!mc) {
+    return (
+      <div className="panel p-5">
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-electric-400" />
+          <span className="font-display font-semibold text-[13px] text-slate-200">MC Score</span>
+        </div>
+        <div className="font-mono text-[11px] text-slate-600 mt-3">Score unavailable — not enough data for {ticker}.</div>
+      </div>
+    )
+  }
+
+  const col = mcColor(mc.score)
+  const confCol = mc.confidence === 'High' ? '#00ff88' : mc.confidence === 'Medium' ? '#ffb800' : '#ff4466'
+
+  const toggleTrack = async () => {
+    const next = !showTrack
+    setShowTrack(next)
+    if (!next || track || trackLoading) return
+    setTrackLoading(true)
+    try { setTrack(await jsonp(APPS_SCRIPT_URL + '?action=getScoreTrackRecord')) }
+    catch (e) { setTrack({ error: e.message }) }
+    finally { setTrackLoading(false) }
+  }
+
+  return (
+    <div className="panel p-5">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Sparkles size={14} className="text-electric-400" />
+          <InfoTip text={MC_SCORE_TIP}><span className="font-display font-semibold text-[13px] text-slate-200">MC Score</span></InfoTip>
+          <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">7-factor model v{mc.version}</span>
+          <span style={{ color: confCol, borderColor: confCol + '55', background: confCol + '14' }}
+            className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border">
+            {mc.confidence} confidence · {mc.coverage}% data
+          </span>
+        </div>
+        <button onClick={toggleTrack}
+          className="font-mono text-[10px] uppercase tracking-wider text-slate-500 hover:text-electric-400 border border-white/10 hover:border-electric-500/30 px-2.5 py-1 rounded transition-all">
+          {showTrack ? 'Hide' : 'Track record'}
+        </button>
+      </div>
+
+      <div className={`grid gap-5 ${isMobile ? 'grid-cols-1' : 'grid-cols-12'}`}>
+        {/* Headline score */}
+        <div className={isMobile ? '' : 'col-span-3'}>
+          <div className="flex items-end gap-2">
+            <span style={{ color: col, fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 56, lineHeight: 1 }}>{mc.score.toFixed(1)}</span>
+            <span className="font-mono text-[13px] text-slate-600 mb-2">/10</span>
+          </div>
+          <div style={{ color: col }} className="font-display font-bold text-[18px] mt-1">{mc.label}</div>
+          <div className="relative h-2 rounded mt-3" style={{ background: 'linear-gradient(90deg,#ff4466 0%,#ff4466 30%,#ffb800 45%,#ffb800 65%,#00ff88 80%,#00ff88 100%)', opacity: 0.85 }}>
+            <div style={{ left: `calc(${mc.score * 10}% - 6px)`, borderColor: col }}
+              className="absolute -top-1 w-3 h-4 rounded-sm bg-navy-950 border-2 transition-all" />
+          </div>
+          <div className="flex justify-between font-mono text-[8px] text-slate-600 mt-1 uppercase tracking-wider">
+            <span>Sell</span><span>Hold</span><span>Buy</span>
+          </div>
+          {mc.caps && mc.caps.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {mc.caps.map((c, i) => <div key={i} className="font-mono text-[10px] text-terminal-amber leading-snug">⚠ {c}</div>)}
+            </div>
+          )}
+        </div>
+
+        {/* Factor breakdown */}
+        <div className={isMobile ? '' : 'col-span-5'}>
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Factor breakdown · tap for detail</div>
+          <div className="space-y-1">
+            {mc.factors.map(f => (
+              <div key={f.key}>
+                <button onClick={() => setOpenKey(openKey === f.key ? null : f.key)}
+                  className="w-full flex items-center gap-2 py-1 group text-left">
+                  <span className="font-mono text-[11px] text-slate-300 w-[140px] flex-shrink-0 truncate">
+                    <InfoTip text={FACTOR_TIPS[f.key]}>{f.name}</InfoTip>
+                  </span>
+                  <span className="font-mono text-[9px] text-slate-600 w-8 flex-shrink-0">{Math.round(f.weight * 100)}%</span>
+                  <div className="flex-1 h-1.5 bg-navy-800 rounded overflow-hidden">
+                    <div style={{ width: f.score == null ? 0 : f.score * 10 + '%', background: mcColor(f.score) }} className="h-full rounded transition-all" />
+                  </div>
+                  <span style={{ color: mcColor(f.score) }} className="font-mono text-[11px] font-semibold w-8 text-right flex-shrink-0">
+                    {f.score == null ? '—' : f.score.toFixed(1)}
+                  </span>
+                </button>
+                {openKey === f.key && (
+                  <div className="ml-2 mb-2 pl-3 border-l border-electric-500/20 space-y-0.5">
+                    {f.metrics.map(m => (
+                      <div key={m.label} className="flex justify-between font-mono text-[10px]">
+                        <span className="text-slate-500">{m.label}</span>
+                        <span className="text-slate-300">{m.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Signals */}
+        <div className={isMobile ? '' : 'col-span-4'}>
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Key signals</div>
+          <div className="space-y-1.5">
+            {mc.flags.green.map((s, i) => (
+              <div key={'g' + i} className="flex gap-2 font-mono text-[11px] text-slate-300 leading-snug"><span className="text-terminal-green flex-shrink-0">▲</span>{s}</div>
+            ))}
+            {mc.flags.red.map((s, i) => (
+              <div key={'r' + i} className="flex gap-2 font-mono text-[11px] text-slate-300 leading-snug"><span className="text-terminal-red flex-shrink-0">▼</span>{s}</div>
+            ))}
+            {!mc.flags.green.length && !mc.flags.red.length && (
+              <div className="font-mono text-[11px] text-slate-600">No strong signals either way.</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Track record */}
+      {showTrack && (
+        <div className="mt-4 pt-4 border-t border-white/5">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Model track record · return since scored vs S&amp;P 500</div>
+          {trackLoading && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking past scores against today's prices…</div>}
+          {track && track.error && <div className="font-mono text-[11px] text-terminal-red">{track.error}</div>}
+          {track && !track.error && track.matured === 0 && (
+            <div className="font-mono text-[11px] text-slate-500 leading-relaxed">
+              Collecting data: {track.total} score{track.total === 1 ? '' : 's'} logged{track.firstDate ? ' since ' + track.firstDate : ''}.
+              Results appear once scores are {track.minDays}+ days old. Every stock you analyze is logged automatically (once per day) —
+              the more stocks you analyze, the sooner you'll know if the model works.
+            </div>
+          )}
+          {track && !track.error && track.matured > 0 && (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>{['Rating', 'Scores', 'Avg return', 'vs S&P 500', 'Beat S&P'].map((h, i) => (
+                    <th key={h} style={{ textAlign: i === 0 ? 'left' : 'right', padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#475569', borderBottom: '1px solid rgba(14,165,233,0.08)' }}>{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {track.buckets.map(b => (
+                    <tr key={b.label}>
+                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#cbd5e1' }}>{b.label}</td>
+                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
+                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, textAlign: 'right', color: b.avgReturn == null ? '#475569' : b.avgReturn >= 0 ? '#00ff88' : '#ff4466' }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
+                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, fontWeight: 700, textAlign: 'right', color: b.avgVsSpy == null ? '#475569' : b.avgVsSpy >= 0 ? '#00ff88' : '#ff4466' }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
+                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#94a3b8', textAlign: 'right' }}>{b.beatSpyRate == null ? '—' : b.beatSpyRate.toFixed(0) + '%'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="font-mono text-[10px] text-slate-600 mt-2">
+                {track.matured} matured score{track.matured === 1 ? '' : 's'} ({track.minDays}+ days old). A model that works shows Strong Buy &gt; Buy &gt; Hold &gt; Sell in the "vs S&amp;P 500" column.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Claude explanation */}
+      <div className="mt-4 pt-4 border-t border-white/5">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600">Analyst explanation · Claude</span>
+          {!aiSummary && !aiLoading && (
+            <button onClick={onGenerate}
+              className="flex items-center gap-2 px-3 py-1.5 rounded border border-electric-500/30 bg-electric-500/10 text-electric-400 text-[10px] font-mono uppercase tracking-wider hover:border-electric-500/50 hover:bg-electric-500/15 transition-all">
+              <Sparkles size={10} /> Explain this score
+            </button>
+          )}
+        </div>
+        {aiLoading && (
+          <div className="flex items-center gap-3 py-2">
+            <div className="w-4 h-4 rounded-full border-2 border-electric-500/30 border-t-electric-500 animate-spin flex-shrink-0" />
+            <div className="font-mono text-[12px] text-slate-500 animate-pulse">Claude is reviewing the factors and headlines for {ticker}…</div>
+          </div>
+        )}
+        {aiError && <div className="font-mono text-[11px] text-terminal-red py-1">{aiError}</div>}
+        {aiSummary && (
+          <div className="font-mono text-[12px] text-slate-300 leading-relaxed whitespace-pre-wrap border-l-2 border-electric-500/30 pl-4">{aiSummary}</div>
+        )}
+        {!aiSummary && !aiLoading && !aiError && (
+          <div className="font-mono text-[11px] text-slate-600">Claude explains what drives the score and checks recent headlines for risks the numbers can't see (~$0.002).</div>
+        )}
+      </div>
+
+      <div className="font-mono text-[9px] text-slate-700 mt-4">
+        Systematic model output, not financial advice. Markets can move against any signal — size positions accordingly.
+      </div>
+    </div>
+  )
+}
+
 // ── Analyze view ──────────────────────────────────────────────
 function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [ticker,      setTicker]      = useState('')
@@ -414,7 +630,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [error,       setError]       = useState(null)
   const [chartPeriod, setChartPeriod] = useState('1Y')
   const [aiSummary,   setAiSummary]   = useState(null)
-  const [aiScore,     setAiScore]     = useState(null)
   const [aiLoading,   setAiLoading]   = useState(false)
   const [aiError,     setAiError]     = useState(null)
   const hasAutoRun = useRef(false)
@@ -423,7 +638,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
     const target = (t || ticker || selectVal || '').trim().toUpperCase()
     if (!target) return
     setLoading(true); setError(null); setData(null); setRevenueData(null); setChartPeriod('1Y')
-    setAiSummary(null); setAiScore(null); setAiError(null)
+    setAiSummary(null); setAiError(null)
     try {
       const d = await fetchWorkstationData(target)
       if (!d?.profile?.name) throw new Error('No data for "' + target + '" — may not be on Finnhub free tier')
@@ -443,36 +658,10 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
     if (!data) return
     setAiLoading(true); setAiError(null)
     try {
-      const payload = {
-        profile: data.profile,
-        metrics: data.metrics,
-        fairValue: data.fairValue,
-        margins: data.margins,
-        growth: data.growth,
-        riskProfile: data.riskProfile,
-        earnings: data.earnings,
-        analyst: data.analyst,
-        priceTargets: data.priceTargets,
-        insiders: data.insiders,
-      }
-      const encoded = encodeURIComponent(JSON.stringify(payload))
-      const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(data.ticker) + '&data=' + encoded)
+      const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(data.ticker))
       if (result.error) setAiError(result.error)
-      else {
-        // Extract score from first line
-        const lines = (result.summary || '').split('\n')
-        const firstLine = lines[0] || ''
-        const scoreMatch = firstLine.match(/([0-9](?:\.[0-9])?)\/10/) ||
-                           (result.summary || '').match(/Score:\s*([0-9](?:\.[0-9])?)\/10/i)
-        const score = scoreMatch ? parseFloat(scoreMatch[1]) : result.score
-        if (score != null) setAiScore(score)
-        // Remove score line from displayed text
-        const body = scoreMatch && lines[0].match(/^Score:/i)
-          ? lines.slice(1).join('\n').trim()
-          : result.summary
-        setAiSummary(body)
-      }
-    } catch(e) { setAiError(e.message) }
+      else setAiSummary(result.summary)
+    } catch (e) { setAiError(e.message) }
     finally { setAiLoading(false) }
   }
 
@@ -618,73 +807,16 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
             </div>
           </div>
 
-          {/* AI Investment Summary — between chart and indicators */}
-          <div className="panel p-5">
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Sparkles size={14} className="text-electric-400" />
-                <span className="font-display font-semibold text-[13px] text-slate-200">AI Investment Summary</span>
-                <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">Claude Haiku · ~$0.002/click</span>
-              </div>
-              <div className="flex items-center gap-3">
-                {aiSummary && aiScore != null && (
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[10px] text-slate-500 uppercase tracking-wider">Score</span>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-32 h-2 bg-navy-800 rounded overflow-hidden border border-white/10">
-                        <div style={{
-                          width: (aiScore * 10) + '%',
-                          height: '100%',
-                          background: aiScore >= 7 ? '#00ff88' : aiScore >= 4 ? '#ffb800' : '#ff4466',
-                          borderRadius: 4,
-                          transition: 'width 0.8s ease',
-                        }} />
-                      </div>
-                      <span style={{
-                        color: aiScore >= 7 ? '#00ff88' : aiScore >= 4 ? '#ffb800' : '#ff4466',
-                        fontFamily: 'IBM Plex Mono', fontWeight: 700, fontSize: 16,
-                      }}>{aiScore}<span style={{fontSize:10, color:'#475569'}}>/10</span></span>
-                      <span style={{
-                        fontFamily: 'IBM Plex Mono', fontSize: 10,
-                        color: aiScore >= 7 ? '#00ff88' : aiScore >= 4 ? '#ffb800' : '#ff4466',
-                      }}>
-                        {aiScore >= 8 ? 'Strong Buy' : aiScore >= 6 ? 'Buy' : aiScore >= 4 ? 'Hold' : aiScore >= 2 ? 'Sell' : 'Strong Sell'}
-                      </span>
-                    </div>
-                  </div>
-                )}
-                {!aiSummary && !aiLoading && (
-                  <button onClick={fetchAISummary}
-                    className="flex items-center gap-2 px-4 py-2 rounded border border-electric-500/30 bg-electric-500/10 text-electric-400 text-[11px] font-mono uppercase tracking-wider hover:border-electric-500/50 hover:bg-electric-500/15 transition-all">
-                    <Sparkles size={11} /> Generate
-                  </button>
-                )}
-                {aiSummary && (
-                  <button onClick={() => { setAiSummary(null); setAiScore(null) }}
-                    className="text-[10px] font-mono text-slate-600 hover:text-slate-400 transition-colors">
-                    Regenerate
-                  </button>
-                )}
-              </div>
-            </div>
-            {aiLoading && (
-              <div className="flex items-center gap-3 py-3">
-                <div className="w-4 h-4 rounded-full border-2 border-electric-500/30 border-t-electric-500 animate-spin flex-shrink-0" />
-                <div className="font-mono text-[12px] text-slate-500 animate-pulse">Claude is analyzing {data?.ticker}…</div>
-              </div>
-            )}
-            {aiError && <div className="font-mono text-[11px] text-terminal-red py-2">{aiError}</div>}
-            {aiSummary && (
-              <div className="font-mono text-[12px] text-slate-300 leading-relaxed whitespace-pre-wrap border-l-2 border-electric-500/30 pl-4">
-                {aiSummary}
-              </div>
-            )}
-            {!aiSummary && !aiLoading && !aiError && (
-              <div className="font-mono text-[11px] text-slate-600 py-1">
-                Click Generate for an AI-powered investment thesis (score 0–10 + 3-paragraph analysis).
-              </div>
-            )}
-          </div>
+          {/* MC Score — quantitative model + Claude explanation */}
+          <MCScorePanel
+            mc={data.mcScore}
+            ticker={data.ticker}
+            isMobile={isMobile}
+            aiSummary={aiSummary}
+            aiLoading={aiLoading}
+            aiError={aiError}
+            onGenerate={fetchAISummary}
+          />
 
           {/* Phase 1: Earnings Quality + Price Targets + Insider Activity */}
           <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
