@@ -391,14 +391,14 @@ function SectorPulse({ portfolio, isMobile }) {
 const lbColor = s => s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
 const LB_REGIME = { 'risk-off': ['#ff4466', 'Risk-off'], 'neutral': ['#ffb800', 'Neutral'], 'risk-on': ['#00ff88', 'Risk-on'] }
 
-function LeaderRow({ r, i, onAnalyze, isMobile }) {
+function LeaderRow({ r, i, onAnalyze, isMobile, weak }) {
   const c = lbColor(r.score)
   return (
     <button onClick={() => onAnalyze && onAnalyze(r.ticker)}
       className="w-full flex items-center gap-3 px-4 py-2 border-b border-white/5 last:border-0 hover:bg-electric-500/[0.04] transition-colors text-left">
       <span className="font-mono text-[10px] text-slate-600 w-4 text-right flex-shrink-0">{i + 1}</span>
       <span className="font-mono font-bold text-[13px] text-electric-300 w-16 flex-shrink-0">{r.ticker}</span>
-      {!isMobile && <span className="font-mono text-[11px] text-slate-500 truncate flex-1 min-w-0">{r.signal || r.name}</span>}
+      {!isMobile && <span className={`font-mono text-[11px] truncate flex-1 min-w-0 ${weak && r.risk ? 'text-terminal-red/80' : 'text-slate-500'}`}>{(weak ? r.risk : r.signal) || r.name}</span>}
       <span className="flex items-center gap-2 flex-shrink-0 ml-auto">
         {!isMobile && r.low !== '' && r.high !== '' && <span className="font-mono text-[9px] text-slate-600">{Number(r.low).toFixed(1)}–{Number(r.high).toFixed(1)}</span>}
         <span style={{ color: c, borderColor: c + '55', background: c + '14' }} className="font-mono text-[12px] font-bold px-2 py-0.5 rounded border w-12 text-center">{Number(r.score).toFixed(1)}</span>
@@ -453,7 +453,7 @@ function ScoreLeaders({ onAnalyze, isMobile }) {
           {data.bottom.length > 0 && (
             <div>
               <div className="px-4 pt-2 pb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-terminal-red">▼ Weakest — review these</div>
-              {data.bottom.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} />)}
+              {data.bottom.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} weak />)}
             </div>
           )}
         </div>
