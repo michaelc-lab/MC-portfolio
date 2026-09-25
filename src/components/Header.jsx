@@ -64,7 +64,7 @@ export default function Header({ data, loading, error, lastUpdated, onRefresh, i
 
   if (isMobile) {
     return (
-      <header className="border-b border-electric-500/10 bg-navy-900/90 backdrop-blur-xl sticky top-0 z-50">
+      <header className="border-b border-electric-500/10 bg-navy-900/[0.97] sticky top-0 z-50">
         {/* Mobile brand bar */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
           <div className="flex items-center gap-2">
@@ -109,7 +109,7 @@ export default function Header({ data, loading, error, lastUpdated, onRefresh, i
 
   // Desktop header
   return (
-    <header className="border-b border-electric-500/10 bg-navy-900/80 backdrop-blur-xl sticky top-0 z-50">
+    <header className="border-b border-electric-500/10 bg-navy-900/[0.97] sticky top-0 z-50">
       <div className="flex items-center justify-between px-6 py-3 border-b border-white/5">
         <div className="flex items-center gap-4">
           <div className="relative">
