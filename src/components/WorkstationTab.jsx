@@ -404,24 +404,51 @@ function DualChart({ chartA, chartB, tickerA, tickerB }) {
   )
 }
 
-// ── MC Score panel ────────────────────────────────────────────
-const MC_SCORE_TIP = `<b>MC Score (0–10)</b> — computed by a fixed-rule model across 7 research-backed factors. AI does not pick the number.<br/><br/>
+// ── MC Score panel (v2) ───────────────────────────────────────
+const MC_SCORE_TIP = `<b>MC Score (0–10)</b> — computed by a fixed-rule model: 7 factors, 30+ research-backed signals. AI never picks the number.<br/><br/>
   🟢 8–10 Strong Buy · 6.5–8 Buy<br/>
   🟡 4.5–6.5 Hold<br/>
   🔴 3–4.5 Sell · 0–3 Strong Sell<br/><br/>
-  <i>Confidence = how much real data backs the score. Open Track Record to see whether high scores actually beat the S&amp;P 500.</i>`
+  <i>Benchmarked against sector medians, adjusted for the market regime, and it learns from its own 30-day results.</i>`
+
+const RANGE_TIP = `<b>Likely range</b> — how far the score could move if the data were slightly different.<br/>Narrow = factors agree. Wide = the stock is controversial: strong on some factors, weak on others.<br/><br/><i>Two stocks with the same score but different ranges are very different bets.</i>`
+
+const AGREE_TIP = `<b>Factor agreement</b><br/>🟢 Strong agreement — all factors point the same way (higher conviction)<br/>🟡 Mixed — some disagreement<br/>🔴 Conflicted — e.g. great momentum but terrible value. Size positions smaller.`
+
+const REGIME_TIP = `<b>Market regime</b> — read from the VIX and the S&amp;P 500 vs its 200-day average.<br/><br/>
+  🔴 <b>Risk-off</b> (VIX ≥ 25 or S&amp;P below its 200d): momentum weight cut, quality &amp; low-risk raised. Momentum strategies historically crash in stressed markets (Daniel &amp; Moskowitz, 2016).<br/>
+  🟡 <b>Neutral</b>: research base weights.<br/>
+  🟢 <b>Risk-on</b> (VIX &lt; 16, S&amp;P rising): momentum &amp; growth raised.`
+
+const LEARN_TIP = `<b>Self-learning weights</b><br/>Every stock in your universe is scored daily and logged. After 30 days the model checks which factors actually predicted returns vs the S&amp;P 500 — on YOUR stocks.<br/><br/>
+  Weights move only when a factor's edge is statistically significant (Fama-MacBeth regression, Bonferroni-corrected 95% bar). Tested on 60 simulated markets: it found the real signals and ignored noise.<br/><br/><i>Needs ~3 months of results before it changes anything.</i>`
+
+const IC_TIP = `<b>Information coefficient (IC)</b> — rank correlation between the score and the next 30-day return vs the S&amp;P 500.<br/><br/>0.00 = no skill · 0.05+ = useful · 0.10+ = excellent (top quant funds live around 0.05–0.10)<br/><br/><i>t-stat shows how confident we are it's not luck.</i>`
 
 const FACTOR_TIPS = {
-  momentum: `<b>Momentum &amp; Trend · 20%</b><br/>Stocks that rose over the past 12 months (skipping the latest month) tend to keep outperforming for 3–12 months — one of the most replicated effects in finance (Jegadeesh &amp; Titman, 1993).<br/><br/><i>Also checks price vs the 200-day average and the 50/200-day trend.</i>`,
-  value: `<b>Value · 17%</b><br/>Cheap stocks outperform expensive ones over long horizons (Fama &amp; French).<br/>Combines Eulerpool fair value, PEG (P/E ÷ earnings growth) and analyst targets.<br/><br/><i>Analyst targets are ~10% too optimistic on average, so the model discounts them.</i>`,
-  quality: `<b>Quality · 18%</b><br/>Highly profitable companies earn higher returns (Novy-Marx, 2013).<br/>Gross &amp; net margin, return on equity, margin trend and debt/equity.<br/><br/><i>Expanding margins weigh heavily — they signal pricing power.</i>`,
-  growth: `<b>Growth · 12%</b><br/>Annual revenue &amp; earnings compounding over 3 years, plus the latest 12-month revenue growth to catch acceleration or slowdown.`,
-  earnings: `<b>Earnings Surprises · 13%</b><br/>Stocks that beat estimates keep drifting up for weeks after the report — "post-earnings drift" (Bernard &amp; Thomas, 1989).<br/>Beat rate, average surprise and the latest surprise.`,
-  smart: `<b>Smart Money · 12%</b><br/>Insider open-market <b>purchases</b> predict returns (Lakonishok &amp; Lee, 2001) — especially several insiders buying together.<br/>Insider <b>sales</b> count only lightly (often taxes or diversification).<br/><br/><i>Also tracks whether analysts are upgrading or downgrading.</i>`,
-  risk: `<b>Risk · 8%</b><br/>Lower-volatility stocks have historically delivered better risk-adjusted returns (Frazzini &amp; Pedersen, 2014).<br/>Volatility, max drawdown and Sharpe ratio.`,
+  momentum: `<b>Momentum &amp; Trend</b><br/>• 12-1 month return (Jegadeesh &amp; Titman, 1993)<br/>• Risk-adjusted momentum (Barroso &amp; Santa-Clara, 2015)<br/>• Strength vs S&amp;P 500<br/>• Nearness to 52-week high (George &amp; Hwang, 2004)<br/>• Trend smoothness — steady gains persist more than jumps (Da, Gurun &amp; Warachka, 2014)<br/>• 50/200-day trend`,
+  value: `<b>Value</b><br/>• Fair value upside (Eulerpool)<br/>• P/E vs sector median and PEG<br/>• Free cash flow yield<br/>• Analyst targets, discounted ~10% for their historical optimism<br/><br/><i>Cheap stocks outperform over long horizons (Fama &amp; French).</i>`,
+  quality: `<b>Quality &amp; Balance Sheet</b><br/>• Margins vs sector (Novy-Marx, 2013)<br/>• ROE / ROIC, margin trend, debt<br/>• Piotroski F-Score — 9 accounting health tests (2000)<br/>• Accruals — are earnings backed by cash? (Sloan, 1996)<br/>• Share dilution vs buybacks (Pontiff &amp; Woodgate, 2008)`,
+  growth: `<b>Growth</b><br/>• 3-year revenue &amp; earnings CAGR<br/>• Latest 12-month revenue &amp; EPS growth<br/>• Acceleration — is growth speeding up or slowing?`,
+  earnings: `<b>Earnings Surprises</b><br/>Stocks drift after surprises for weeks (Bernard &amp; Thomas, 1989).<br/>• Beat rate &amp; average surprise<br/>• Standardized surprise (SUE) — surprise ÷ its usual size<br/>• The effect fades with time since the report`,
+  smart: `<b>Smart Money</b><br/>• Insider open-market <b>purchases</b> — strongest signal, especially several insiders at once (Lakonishok &amp; Lee, 2001)<br/>• Recent buys count more (90-day half-life)<br/>• Insider sales count lightly — often taxes or diversification<br/>• Analyst upgrade/downgrade trend (Womack, 1996)`,
+  risk: `<b>Risk</b><br/>Low-volatility stocks deliver better risk-adjusted returns (Frazzini &amp; Pedersen, 2014).<br/>Volatility, max drawdown, Sharpe ratio, beta.<br/><br/><i>Weight rises automatically in stressed markets.</i>`,
 }
 
 const mcColor = s => s == null ? '#475569' : s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
+const REGIME_STYLE = {
+  'risk-off': { c: '#ff4466', t: 'Risk-off' },
+  'neutral':  { c: '#ffb800', t: 'Neutral market' },
+  'risk-on':  { c: '#00ff88', t: 'Risk-on' },
+}
+const AGREE_COLOR = { 'Strong agreement': '#00ff88', 'Mixed signals': '#ffb800', 'Conflicted': '#ff4466' }
+const FACTOR_NAMES = { momentum: 'Momentum', value: 'Value', quality: 'Quality', growth: 'Growth', earnings: 'Earnings', smart: 'Smart Money', risk: 'Risk' }
+const Chip = ({ color, children }) => (
+  <span style={{ color, borderColor: color + '55', background: color + '14' }} className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border whitespace-nowrap">{children}</span>
+)
+const th = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#475569', borderBottom: '1px solid rgba(14,165,233,0.08)', whiteSpace: 'nowrap' }
+const td = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, whiteSpace: 'nowrap' }
+const pctColor = v => v == null ? '#475569' : v >= 0 ? '#00ff88' : '#ff4466'
 
 const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onGenerate }) {
   const [openKey, setOpenKey] = useState(null)
@@ -443,6 +470,9 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
 
   const col = mcColor(mc.score)
   const confCol = mc.confidence === 'High' ? '#00ff88' : mc.confidence === 'Medium' ? '#ffb800' : '#ff4466'
+  const reg = REGIME_STYLE[(mc.regime && mc.regime.name) || 'neutral'] || REGIME_STYLE.neutral
+  const range = mc.range || { low: mc.score, high: mc.score }
+  const learning = mc.learning || {}
 
   const toggleTrack = async () => {
     const next = !showTrack
@@ -461,11 +491,14 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
         <div className="flex items-center gap-2 flex-wrap">
           <Sparkles size={14} className="text-electric-400" />
           <InfoTip text={MC_SCORE_TIP}><span className="font-display font-semibold text-[13px] text-slate-200">MC Score</span></InfoTip>
-          <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">7-factor model v{mc.version}</span>
-          <span style={{ color: confCol, borderColor: confCol + '55', background: confCol + '14' }}
-            className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border">
-            {mc.confidence} confidence · {mc.coverage}% data
-          </span>
+          <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">v{mc.version} · 7 factors · 30+ signals</span>
+          <Chip color={confCol}>{mc.confidence} confidence · {mc.coverage}% data</Chip>
+          <InfoTip text={REGIME_TIP + (mc.regime && mc.regime.note ? `<br/><br/><b>Now:</b> ${mc.regime.note}${mc.regime.vix != null ? ` (VIX ${Number(mc.regime.vix).toFixed(1)})` : ''}` : '')}>
+            <Chip color={reg.c}>{reg.t}</Chip>
+          </InfoTip>
+          <InfoTip text={LEARN_TIP}>
+            <Chip color={learning.active ? '#38bdf8' : '#64748b'}>{learning.active ? `Self-tuned · ${learning.periods} mo` : 'Self-learning · collecting'}</Chip>
+          </InfoTip>
         </div>
         <button onClick={toggleTrack}
           className="font-mono text-[10px] uppercase tracking-wider text-slate-500 hover:text-electric-400 border border-white/10 hover:border-electric-500/30 px-2.5 py-1 rounded transition-all">
@@ -482,11 +515,27 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
           </div>
           <div style={{ color: col }} className="font-display font-bold text-[18px] mt-1">{mc.label}</div>
           <div className="relative h-2 rounded mt-3" style={{ background: 'linear-gradient(90deg,#ff4466 0%,#ff4466 30%,#ffb800 45%,#ffb800 65%,#00ff88 80%,#00ff88 100%)', opacity: 0.85 }}>
-            <div style={{ left: `calc(${mc.score * 10}% - 6px)`, borderColor: col }}
-              className="absolute -top-1 w-3 h-4 rounded-sm bg-navy-950 border-2 transition-all" />
+            <div className="absolute -top-1 h-4 rounded-sm"
+              style={{ left: range.low * 10 + '%', width: Math.max(0.5, (range.high - range.low) * 10) + '%', background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)' }} />
+            <div style={{ left: `calc(${mc.score * 10}% - 6px)`, borderColor: col }} className="absolute -top-1 w-3 h-4 rounded-sm bg-navy-950 border-2" />
           </div>
           <div className="flex justify-between font-mono text-[8px] text-slate-600 mt-1 uppercase tracking-wider">
             <span>Sell</span><span>Hold</span><span>Buy</span>
+          </div>
+          <div className="mt-3 space-y-1.5">
+            <div className="font-mono text-[10px] text-slate-400">
+              <InfoTip text={RANGE_TIP}><span>Likely range {range.low.toFixed(1)}–{range.high.toFixed(1)}</span></InfoTip>
+            </div>
+            {mc.agreement && (
+              <InfoTip text={AGREE_TIP}><Chip color={AGREE_COLOR[mc.agreement] || '#64748b'}>{mc.agreement}</Chip></InfoTip>
+            )}
+            {mc.universe && (
+              <div className="font-mono text-[10px] text-slate-400">
+                <span className="text-electric-300 font-semibold">#{mc.universe.rank}</span> of {mc.universe.n} in your universe
+                {mc.universe.beats != null && <span className="text-slate-600"> · beats {mc.universe.beats}%</span>}
+              </div>
+            )}
+            {mc.sector && <div className="font-mono text-[10px] text-slate-600">Benchmarked vs {mc.sector} peers</div>}
           </div>
           {mc.caps && mc.caps.length > 0 && (
             <div className="mt-3 space-y-1">
@@ -499,39 +548,46 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
         <div className={isMobile ? '' : 'col-span-5'}>
           <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Factor breakdown · tap for detail</div>
           <div className="space-y-1">
-            {mc.factors.map(f => (
-              <div key={f.key}>
-                <button onClick={() => setOpenKey(openKey === f.key ? null : f.key)}
-                  className="w-full flex items-center gap-2 py-1 group text-left">
-                  <span className="font-mono text-[11px] text-slate-300 w-[140px] flex-shrink-0 truncate">
-                    <InfoTip text={FACTOR_TIPS[f.key]}>{f.name}</InfoTip>
-                  </span>
-                  <span className="font-mono text-[9px] text-slate-600 w-8 flex-shrink-0">{Math.round(f.weight * 100)}%</span>
-                  <div className="flex-1 h-1.5 bg-navy-800 rounded overflow-hidden">
-                    <div style={{ width: f.score == null ? 0 : f.score * 10 + '%', background: mcColor(f.score) }} className="h-full rounded transition-all" />
-                  </div>
-                  <span style={{ color: mcColor(f.score) }} className="font-mono text-[11px] font-semibold w-8 text-right flex-shrink-0">
-                    {f.score == null ? '—' : f.score.toFixed(1)}
-                  </span>
-                </button>
-                {openKey === f.key && (
-                  <div className="ml-2 mb-2 pl-3 border-l border-electric-500/20 space-y-0.5">
-                    {f.metrics.map(m => (
-                      <div key={m.label} className="flex justify-between font-mono text-[10px]">
-                        <span className="text-slate-500">{m.label}</span>
-                        <span className="text-slate-300">{m.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+            {mc.factors.map(f => {
+              const base = f.baseWeight != null ? f.baseWeight : f.weight
+              const delta = f.weight - base
+              return (
+                <div key={f.key}>
+                  <button onClick={() => setOpenKey(openKey === f.key ? null : f.key)}
+                    className="w-full flex items-center gap-2 py-1 text-left">
+                    <span className="font-mono text-[11px] text-slate-300 w-[140px] flex-shrink-0 truncate">
+                      <InfoTip text={FACTOR_TIPS[f.key]}>{f.name}</InfoTip>
+                    </span>
+                    <span className="font-mono text-[9px] text-slate-600 w-10 flex-shrink-0"
+                      title={Math.abs(delta) >= 0.005 ? `Adjusted from ${Math.round(base * 100)}% (market regime / learned results)` : 'Research base weight'}>
+                      {Math.round(f.weight * 100)}%{Math.abs(delta) >= 0.005 && <span style={{ color: delta > 0 ? '#00ff88' : '#ff4466' }}>{delta > 0 ? '↑' : '↓'}</span>}
+                    </span>
+                    <div className="flex-1 h-1.5 bg-navy-800 rounded overflow-hidden">
+                      <div style={{ width: f.score == null ? 0 : f.score * 10 + '%', background: mcColor(f.score) }} className="h-full rounded" />
+                    </div>
+                    <span style={{ color: mcColor(f.score) }} className="font-mono text-[11px] font-semibold w-8 text-right flex-shrink-0">
+                      {f.score == null ? '—' : f.score.toFixed(1)}
+                    </span>
+                  </button>
+                  {openKey === f.key && (
+                    <div className="ml-2 mb-2 pl-3 border-l border-electric-500/20 space-y-0.5">
+                      {f.metrics.map(m => (
+                        <div key={m.label} className="flex justify-between gap-3 font-mono text-[10px]">
+                          <span className="text-slate-500">{m.label}</span>
+                          <span className="text-slate-300 text-right">{m.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
 
         {/* Signals */}
         <div className={isMobile ? '' : 'col-span-4'}>
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Key signals</div>
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Key signals · most important first</div>
           <div className="space-y-1.5">
             {mc.flags.green.map((s, i) => (
               <div key={'g' + i} className="flex gap-2 font-mono text-[11px] text-slate-300 leading-snug"><span className="text-terminal-green flex-shrink-0">▲</span>{s}</div>
@@ -549,38 +605,73 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
       {/* Track record */}
       {showTrack && (
         <div className="mt-4 pt-4 border-t border-white/5">
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Model track record · return since scored vs S&amp;P 500</div>
-          {trackLoading && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking past scores against today's prices…</div>}
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">
+            Model track record · 30-day return after each score, vs S&amp;P 500
+          </div>
+          {trackLoading && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking every past score against what happened next…</div>}
           {track && track.error && <div className="font-mono text-[11px] text-terminal-red">{track.error}</div>}
           {track && !track.error && track.matured === 0 && (
             <div className="font-mono text-[11px] text-slate-500 leading-relaxed">
               Collecting data: {track.total} score{track.total === 1 ? '' : 's'} logged{track.firstDate ? ' since ' + track.firstDate : ''}.
-              Results appear once scores are {track.minDays}+ days old. Every stock you analyze is logged automatically (once per day) —
-              the more stocks you analyze, the sooner you'll know if the model works.
+              {track.firstResults && <> First 30-day results on <span className="text-slate-300">{track.firstResults}</span>.</>}
+              {' '}Your whole universe is scored automatically every day, so evidence builds fast.
             </div>
           )}
           {track && !track.error && track.matured > 0 && (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>{['Rating', 'Scores', 'Avg return', 'vs S&P 500', 'Beat S&P'].map((h, i) => (
-                    <th key={h} style={{ textAlign: i === 0 ? 'left' : 'right', padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#475569', borderBottom: '1px solid rgba(14,165,233,0.08)' }}>{h}</th>
-                  ))}</tr>
-                </thead>
-                <tbody>
-                  {track.buckets.map(b => (
-                    <tr key={b.label}>
-                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#cbd5e1' }}>{b.label}</td>
-                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
-                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, textAlign: 'right', color: b.avgReturn == null ? '#475569' : b.avgReturn >= 0 ? '#00ff88' : '#ff4466' }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
-                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, fontWeight: 700, textAlign: 'right', color: b.avgVsSpy == null ? '#475569' : b.avgVsSpy >= 0 ? '#00ff88' : '#ff4466' }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
-                      <td style={{ padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#94a3b8', textAlign: 'right' }}>{b.beatSpyRate == null ? '—' : b.beatSpyRate.toFixed(0) + '%'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="font-mono text-[10px] text-slate-600 mt-2">
-                {track.matured} matured score{track.matured === 1 ? '' : 's'} ({track.minDays}+ days old). A model that works shows Strong Buy &gt; Buy &gt; Hold &gt; Sell in the "vs S&amp;P 500" column.
+            <div className="space-y-3">
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>{['Rating', 'Outcomes', 'Avg 30d', 'vs S&P 500', 'Beat S&P'].map((h, i) => (
+                      <th key={h} style={{ ...th, textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody>
+                    {track.buckets.map(b => (
+                      <tr key={b.label}>
+                        <td style={{ ...td, color: '#cbd5e1' }}>{b.label}</td>
+                        <td style={{ ...td, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
+                        <td style={{ ...td, textAlign: 'right', color: pctColor(b.avgReturn) }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
+                        <td style={{ ...td, fontWeight: 700, textAlign: 'right', color: pctColor(b.avgVsSpy) }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
+                        <td style={{ ...td, color: '#94a3b8', textAlign: 'right' }}>{b.beatSpyRate == null ? '—' : b.beatSpyRate.toFixed(0) + '%'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {track.icScore && track.icScore.mean != null && (
+                <div className="font-mono text-[11px] text-slate-400">
+                  <InfoTip text={IC_TIP}><span>Model skill (IC)</span></InfoTip>{' '}
+                  <span style={{ color: track.icScore.mean >= 0.05 ? '#00ff88' : track.icScore.mean > 0 ? '#ffb800' : '#ff4466', fontWeight: 700 }}>
+                    {track.icScore.mean >= 0 ? '+' : ''}{track.icScore.mean.toFixed(3)}
+                  </span>
+                  <span className="text-slate-600"> · t={track.icScore.t != null ? track.icScore.t.toFixed(1) : '—'} over {track.periods} independent period{track.periods === 1 ? '' : 's'}</span>
+                </div>
+              )}
+              {track.factors && (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>{['Factor', 'IC', 't-stat', 'Weight now'].map((h, i) => (
+                        <th key={h} style={{ ...th, textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody>
+                      {track.factors.map(f => (
+                        <tr key={f.key}>
+                          <td style={{ ...td, color: '#cbd5e1' }}>{FACTOR_NAMES[f.key] || f.key}</td>
+                          <td style={{ ...td, textAlign: 'right', color: f.ic == null ? '#475569' : f.ic > 0 ? '#00ff88' : '#ff4466' }}>{f.ic == null ? '—' : (f.ic >= 0 ? '+' : '') + f.ic.toFixed(3)}</td>
+                          <td style={{ ...td, textAlign: 'right', color: '#64748b' }}>{f.t == null ? '—' : f.t.toFixed(1)}</td>
+                          <td style={{ ...td, textAlign: 'right', color: f.mult > 1.005 ? '#00ff88' : f.mult < 0.995 ? '#ff4466' : '#64748b' }}>×{(f.mult == null ? 1 : f.mult).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="font-mono text-[10px] text-slate-600 leading-relaxed">
+                {track.matured} outcomes. A working model shows Strong Buy &gt; Buy &gt; Hold &gt; Sell in "vs S&amp;P 500".
+                {' '}{track.learning && track.learning.active ? `Weights self-tuned from ${track.learning.periods} independent periods.` : 'Weights stay at the research base until ~3 months of significant evidence.'}
               </div>
             </div>
           )}
@@ -614,19 +705,14 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
       </div>
 
       <div className="font-mono text-[9px] text-slate-700 mt-4">
-        Systematic model output, not financial advice. Markets can move against any signal — size positions accordingly.
+        Systematic model output, not financial advice. No model predicts the future — use the range, agreement and track record to size positions.
       </div>
     </div>
   )
-}, (prev, next) => {
-  // Only re-render when meaningful props change
-  return prev.mc === next.mc &&
-         prev.ticker === next.ticker &&
-         prev.isMobile === next.isMobile &&
-         prev.aiSummary === next.aiSummary &&
-         prev.aiLoading === next.aiLoading &&
-         prev.aiError === next.aiError
-})
+}, (prev, next) => (
+  prev.mc === next.mc && prev.ticker === next.ticker && prev.isMobile === next.isMobile &&
+  prev.aiSummary === next.aiSummary && prev.aiLoading === next.aiLoading && prev.aiError === next.aiError
+))
 
 // ── Stock Selector — isolated so typing doesn't re-render the score panel ──
 const StockSelector = React.memo(function StockSelector({ allStocks, loading, onRun }) {
