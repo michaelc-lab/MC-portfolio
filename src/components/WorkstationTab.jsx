@@ -133,6 +133,7 @@ const TOOLTIPS = {
 
   insiderActivity: `<b>Insider Activity</b> — executives buying/selling their own stock.<br/>
     🟢 Open Mkt Buy = strong bullish signal<br/>
+    ⚪ Plan/ESPP Buy = payroll-plan purchase, not a discretionary bet — excluded from the verdict<br/>
     🔴 Open Mkt Sale = may be liquidity, not bearish<br/><br/>
     <i>Buys are meaningful. Sales are often planned (diversification, taxes) — less significant unless large &amp; sudden</i>`,
 }
@@ -1036,23 +1037,34 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
               {(() => {
                 const insiders = data.insiders || []
                 if (!insiders.length) return <div className="text-[11px] font-mono text-slate-600">No recent insider transactions</div>
-                const buys  = insiders.filter(t => t.transactionCode === 'P')
-                const sells = insiders.filter(t => t.transactionCode === 'S')
+                const allBuys  = insiders.filter(t => t.transactionCode === 'P')
+                const planBuys = allBuys.filter(t => t.isPlanBuy === true)
+                const buys     = allBuys.filter(t => t.isPlanBuy !== true)   // genuine, discretionary buys only
+                const sells    = insiders.filter(t => t.transactionCode === 'S')
                 const netSentiment = buys.length > sells.length ? 'Bullish' : buys.length < sells.length ? 'Bearish' : 'Neutral'
                 const sentColor = buys.length > sells.length ? '#00ff88' : buys.length < sells.length ? '#ff4466' : '#64748b'
                 return (
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex gap-3">
+                    <div className="flex items-center justify-between flex-wrap gap-y-1">
+                      <div className="flex gap-3 flex-wrap">
                         <span className="font-mono text-[12px]"><span className="positive font-bold">{buys.length} BUY</span></span>
                         <span className="font-mono text-[12px]"><span className="negative font-bold">{sells.length} SELL</span></span>
+                        {planBuys.length > 0 && (
+                          <span className="font-mono text-[12px] text-slate-500">{planBuys.length} plan/ESPP</span>
+                        )}
                       </div>
                       <span style={{color:sentColor}} className="font-mono text-[11px] font-semibold">{netSentiment}</span>
                     </div>
+                    {planBuys.length > 0 && (
+                      <div className="font-mono text-[9px] text-slate-600 leading-snug">
+                        {planBuys.length} of the buys below are payroll-plan purchases (several insiders, same day, same price) — excluded from the verdict above.
+                      </div>
+                    )}
                     {(() => {
                       const txLabel = code => {
                         switch(code) {
                           case 'P': return { label: 'Open Mkt Buy',  color: '#00ff88', signal: '🟢 Strong signal' }
+                          case 'PLAN': return { label: 'Plan/ESPP Buy', color: '#64748b', signal: '' }
                           case 'S': return { label: 'Open Mkt Sale', color: '#ff4466', signal: '🔴 Sale' }
                           case 'A': return { label: 'Award/Grant',   color: '#475569', signal: '' }
                           case 'F': return { label: 'Tax Withhold',  color: '#475569', signal: '' }
@@ -1065,7 +1077,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                       return (
                         <div className="space-y-1 overflow-auto max-h-48">
                           {all.slice(0, 8).map((t, i) => {
-                            const tx = txLabel(t.transactionCode)
+                            const tx = txLabel(t.isPlanBuy === true ? 'PLAN' : t.transactionCode)
                             const isMeaningful = t.transactionCode === 'P' || t.transactionCode === 'S'
                             // Skip non-meaningful transaction types
                           if (['F','A','M'].includes(t.transactionCode)) return null
