@@ -757,7 +757,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [aiSummary,   setAiSummary]   = useState(null)
   const [aiLoading,   setAiLoading]   = useState(false)
   const [aiError,     setAiError]     = useState(null)
-  const hasAutoRun = useRef(false)
+  const lastAutoTicker = useRef(null)
 
   const run = async (t) => {
     const target = (t || '').trim().toUpperCase()
@@ -791,8 +791,8 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   }, [data])
 
   useEffect(() => {
-    if (initialTicker && !hasAutoRun.current) {
-      hasAutoRun.current = true
+    if (initialTicker && initialTicker !== lastAutoTicker.current) {
+      lastAutoTicker.current = initialTicker
       setTicker(initialTicker)
       run(initialTicker)
     }
