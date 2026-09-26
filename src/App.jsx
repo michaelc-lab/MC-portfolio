@@ -17,6 +17,26 @@ const TABS = [
 ]
 
 
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null } }
+  static getDerivedStateFromError(error) { return { error } }
+  componentDidCatch(error, info) { console.error('Dashboard error:', error, info) }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24, textAlign: 'center', background: '#020817', color: '#94a3b8', fontFamily: 'IBM Plex Mono, monospace' }}>
+        <div style={{ fontSize: 32 }}>⚠</div>
+        <div style={{ fontSize: 14, color: '#e2e8f0' }}>Something went wrong showing this view.</div>
+        <div style={{ fontSize: 11, color: '#475569', maxWidth: 480 }}>{this.state.error.message}</div>
+        <button onClick={() => this.setState({ error: null })}
+          style={{ marginTop: 8, padding: '10px 20px', borderRadius: 6, border: '1px solid rgba(14,165,233,0.4)', background: 'rgba(14,165,233,0.1)', color: '#38bdf8', fontFamily: 'inherit', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer' }}>
+          Try again
+        </button>
+      </div>
+    )
+  }
+}
+
 function SplashScreen() {
   const [dot, setDot] = React.useState(0)
   React.useEffect(() => {
@@ -170,11 +190,13 @@ export default function App() {
         {/* Content */}
         {data && (
           <>
-            {tab === 'lead'         && <LeadTab portfolio={portfolio} indexes={indexes} onAnalyze={handleAnalyze} isMobile={isMobile} />}
-            {tab === 'portfolio'    && <StockTable rows={portfolio} isWatchlist={false} onAnalyze={handleAnalyze} isMobile={isMobile} />}
-            {tab === 'watchlist'    && <StockTable rows={watchlist}  isWatchlist={true}  onAnalyze={handleAnalyze} isMobile={isMobile} />}
-            {tab === 'workstation'  && <WorkstationTab portfolio={portfolio} watchlist={watchlist} initialTicker={wsAnalyzeTicker} isMobile={isMobile} />}
-            {tab === 'myportfolios' && <CustomPortfolios onAnalyze={handleAnalyze} isMobile={isMobile} />}
+            <ErrorBoundary key={tab + ':' + (wsAnalyzeTicker || '')}>
+              {tab === 'lead'         && <LeadTab portfolio={portfolio} indexes={indexes} onAnalyze={handleAnalyze} isMobile={isMobile} />}
+              {tab === 'portfolio'    && <StockTable rows={portfolio} isWatchlist={false} onAnalyze={handleAnalyze} isMobile={isMobile} />}
+              {tab === 'watchlist'    && <StockTable rows={watchlist}  isWatchlist={true}  onAnalyze={handleAnalyze} isMobile={isMobile} />}
+              {tab === 'workstation'  && <WorkstationTab portfolio={portfolio} watchlist={watchlist} initialTicker={wsAnalyzeTicker} isMobile={isMobile} />}
+              {tab === 'myportfolios' && <CustomPortfolios onAnalyze={handleAnalyze} isMobile={isMobile} />}
+            </ErrorBoundary>
           </>
         )}
       </main>
