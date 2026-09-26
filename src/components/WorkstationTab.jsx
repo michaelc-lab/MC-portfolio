@@ -715,9 +715,18 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
 ))
 
 // ── Stock Selector — isolated so typing doesn't re-render the score panel ──
-const StockSelector = React.memo(function StockSelector({ allStocks, loading, onRun }) {
-  const [ticker,   setTicker]   = React.useState('')
+const StockSelector = React.memo(function StockSelector({ allStocks, loading, onRun, presetTicker }) {
+  const [ticker,   setTicker]   = React.useState(presetTicker || '')
   const [selectVal,setSelectVal]= React.useState('')
+  const lastPreset = React.useRef(presetTicker)
+
+  React.useEffect(() => {
+    if (presetTicker && presetTicker !== lastPreset.current) {
+      lastPreset.current = presetTicker
+      setTicker(presetTicker)
+      setSelectVal('')
+    }
+  }, [presetTicker])
 
   const handleRun = () => {
     const t = (ticker || selectVal || '').trim().toUpperCase()
@@ -793,7 +802,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   useEffect(() => {
     if (initialTicker && initialTicker !== lastAutoTicker.current) {
       lastAutoTicker.current = initialTicker
-      setTicker(initialTicker)
       run(initialTicker)
     }
   }, [initialTicker])
@@ -813,6 +821,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
         allStocks={allStocks}
         loading={loading}
         onRun={run}
+        presetTicker={initialTicker}
       />
 
       {error   && <div className="panel p-4 border-red-500/20 bg-red-500/5 text-[12px] font-mono text-red-400">{error}</div>}
