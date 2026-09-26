@@ -140,17 +140,28 @@ const TOOLTIPS = {
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwUQqqI6PAa64xq5ZALeJSUWuy86pVtSEG6rIMhgNOQ-7XS-t7PJRRncJ1mi7OAwd0/exec'
 
-function jsonp(url) {
+function jsonpOnce(url, timeoutMs) {
   return new Promise((resolve, reject) => {
     const cbName = '_cb_' + Math.random().toString(36).slice(2)
     const script = document.createElement('script')
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('Timeout')) }, 30000)
+    const timeout = setTimeout(() => { cleanup(); reject(new Error('Timeout')) }, timeoutMs)
     function cleanup() { clearTimeout(timeout); delete window[cbName]; if (script.parentNode) script.parentNode.removeChild(script) }
     window[cbName] = (data) => { cleanup(); resolve(data) }
     script.onerror = () => { cleanup(); reject(new Error('Script load failed')) }
     script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName + '&cb=' + Date.now()
     document.head.appendChild(script)
   })
+}
+
+// Analyzing a stock chains ~12 external API calls server-side, and the background
+// scorer can add contention; a slow-but-working request shouldn't surface as an error.
+// One retry with a longer budget absorbs that, without masking a genuinely broken request.
+async function jsonp(url) {
+  try {
+    return await jsonpOnce(url, 30000)
+  } catch (e) {
+    return await jsonpOnce(url, 45000)
+  }
 }
 
 // ── Shared helpers ────────────────────────────────────────────
