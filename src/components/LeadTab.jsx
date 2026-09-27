@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { TrendingUp, TrendingDown, Zap, AlertTriangle, Activity, Calendar, Sparkles } from 'lucide-react'
+import { TrendingUp, TrendingDown, Zap, AlertTriangle, Activity, Calendar, Sparkles, Newspaper } from 'lucide-react'
 import { fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwUQqqI6PAa64xq5ZALeJSUWuy86pVtSEG6rIMhgNOQ-7XS-t7PJRRncJ1mi7OAwd0/exec'
@@ -387,6 +387,196 @@ function SectorPulse({ portfolio, isMobile }) {
 }
 
 // ── Main export ───────────────────────────────────────────────
+// ── News Radar — free, rule-based, speculative. Completely separate from the MC Score ──
+const RD_STRENGTH = { High: '#38bdf8', Medium: '#ffb800', Low: '#64748b' }
+const rdAgo = iso => {
+  if (!iso) return ''
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
+  return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'
+}
+const rdLinkText = s => s.link === 'named' ? 'Named in news' : s.link === 'ai' ? 'AI-inferred' + (s.aiRelation === 'direct' ? ' · company named' : ' · indirect effect') : s.link === 'name' ? (s.via || 'Name match') : 'Theme: ' + (s.via || '')
+
+function RadarRow({ s, onAnalyze, isMobile }) {
+  const dc = s.dir > 0 ? '#00ff88' : s.dir < 0 ? '#ff4466' : '#64748b'
+  const sc = RD_STRENGTH[s.strength] || '#64748b'
+  return (
+    <div className="flex items-start gap-3 px-4 py-2.5 border-b border-white/5 last:border-0">
+      <span style={{ color: dc }} className="font-mono text-[13px] w-3 flex-shrink-0 leading-5">{s.dir > 0 ? '▲' : s.dir < 0 ? '▼' : '•'}</span>
+      <button onClick={() => onAnalyze && onAnalyze(s.ticker)}
+        className="font-mono font-bold text-[13px] text-electric-300 hover:text-electric-200 w-14 flex-shrink-0 text-left leading-5">{s.ticker}</button>
+      <div className="flex-1 min-w-0">
+        <a href={s.url || undefined} target="_blank" rel="noopener noreferrer"
+          className={`font-mono text-[11px] text-slate-300 hover:text-white leading-snug block ${isMobile ? '' : 'truncate'}`}>{s.headline}</a>
+        <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap mt-1 font-mono text-[9px] text-slate-600 uppercase tracking-wider">
+          <span>{s.source}</span>
+          {s.time && <span>· {rdAgo(s.time)}</span>}
+          <span>· {rdLinkText(s)}</span>
+          {s.sources > 1 && <span>· {s.sources} sources</span>}
+          {s.smallCap && <span className="text-terminal-amber">· small cap</span>}
+          {s.inUniverse && <span className="text-electric-400">· in your universe</span>}
+          {s.volRatio != null && s.volRatio >= 2 && (
+            <span className={s.volRatio >= 3 ? 'text-electric-300' : ''}>· {s.volRatio}× normal volume</span>
+          )}
+          {s.role === 'target' && <span className="text-terminal-green">· merger target</span>}
+          {s.role === 'acquirer' && <span>· acquirer</span>}
+        </div>
+        {s.aiOnly && (
+          <div className={`font-mono text-[9px] text-terminal-amber/90 mt-0.5 leading-snug ${isMobile ? '' : 'truncate'}`}>
+            ◇ AI reasoning: {s.aiReason || s.evidence} — awaiting confirmation (market or company news)
+          </div>
+        )}
+        {s.evidence && !s.aiOnly && (
+          <div className={`font-mono text-[9px] text-terminal-green/80 mt-0.5 leading-snug ${isMobile ? '' : 'truncate'}`}>
+            ✓ Verified: {s.evidenceUrl
+              ? <a href={s.evidenceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a>
+              : s.evidence}{s.evidenceSource ? ' · ' + s.evidenceSource : ''}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+        <span style={{ color: sc, borderColor: sc + '55', background: sc + '14' }}
+          className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 rounded border">{s.strength}</span>
+        {s.confirmed
+          ? <span style={{ color: dc }} className="font-mono text-[10px] font-semibold">{fmtPct(s.dp)} today</span>
+          : s.capped ? <span className="font-mono text-[9px] text-slate-600">unconfirmed</span> : null}
+        {s.late && <span className="font-mono text-[9px] text-terminal-amber text-right leading-tight">late-entry risk:<br />already moved</span>}
+      </div>
+    </div>
+  )
+}
+
+function NewsRadar({ onAnalyze, isMobile }) {
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState(null)
+  const [showAll, setShowAll] = useState(false)
+  const [showTrack, setShowTrack] = useState(false)
+  const [track, setTrack] = useState(null)
+  const fetched = useRef(false)
+
+  useEffect(() => {
+    if (fetched.current) return
+    fetched.current = true
+    jsonp(`${APPS_SCRIPT_URL}?action=getNewsRadar`).then(d => setData(d)).catch(e => setErr(e.message))
+  }, [])
+
+  const toggleTrack = () => {
+    const next = !showTrack
+    setShowTrack(next)
+    if (next && !track) jsonp(`${APPS_SCRIPT_URL}?action=getNewsRadarTrack`).then(t => setTrack(t)).catch(e => setTrack({ error: e.message }))
+  }
+
+  const sigs = (data && data.signals) || []
+  const shown = showAll ? sigs : sigs.slice(0, 6)
+  const meta = data && data.meta
+
+  return (
+    <div className="panel overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Newspaper size={14} className="text-electric-400" />
+          <span className="font-display font-semibold text-[13px] text-slate-200">News Radar</span>
+          <span style={{ color: '#ffb800', borderColor: '#ffb80055', background: '#ffb80014' }}
+            className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border">Speculative</span>
+          {meta && (() => {
+            const ai = meta.ai
+            const on = ai && ai.used && !ai.error
+            const c = on ? '#38bdf8' : ai && ai.used ? '#ffb800' : '#64748b'
+            const txt = on ? 'AI · ' + String(ai.model || 'Gemini').replace(/^gemini-/i, 'Gemini ').replace(/-/g, ' ') : ai && ai.used ? 'AI paused · rules only' : 'Rules only'
+            return <span title={ai && ai.error ? ai.error : ''} style={{ color: c, borderColor: c + '55', background: c + '14' }}
+              className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border">{txt}</span>
+          })()}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600">
+            {meta ? `${meta.headlines} headlines · ${meta.rejected || 0} rejected · scanned ${rdAgo(meta.lastRun)}` : 'Every 30 min · free sources'}
+          </span>
+          <button onClick={toggleTrack}
+            className="font-mono text-[10px] uppercase tracking-wider text-slate-500 hover:text-electric-400 border border-white/10 hover:border-electric-500/30 px-2 py-0.5 rounded transition-all">
+            {showTrack ? 'Hide' : 'Track record'}
+          </button>
+        </div>
+      </div>
+      <div className="px-4 pt-2 pb-1 font-mono text-[10px] text-slate-600 leading-relaxed">
+        AI proposes, data decides: every link is checked against real tickers, company news and the market. AI-only inferences are labeled and capped until confirmed. Separate from the MC Score. News spikes often reverse fast.
+      </div>
+
+      {meta && meta.sectors && meta.sectors.length > 0 && (
+        <div className="px-4 py-2.5 border-b border-white/5 space-y-2.5">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600">
+            Sector watch · news about the whole industry — individual stocks not yet verified
+          </div>
+          {meta.sectors.map(x => (
+            <div key={x.theme + x.dir} className="flex items-start gap-3">
+              <span style={{ color: x.dir > 0 ? '#00ff88' : '#ff4466' }} className="font-mono text-[13px] w-3 flex-shrink-0 leading-5">{x.dir > 0 ? '▲' : '▼'}</span>
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-[11px] text-slate-200">
+                  <span className="font-semibold">{x.theme}</span>
+                  <span className="text-slate-600"> · {x.sources} sources · {x.moving ? `${x.moving} of ${x.tickers.length} moving` : 'not moving yet'}</span>
+                </div>
+                <a href={x.url || undefined} target="_blank" rel="noopener noreferrer"
+                  className={`font-mono text-[10px] text-slate-400 hover:text-white block leading-snug ${isMobile ? '' : 'truncate'}`}>{x.headline}{x.source ? ' · ' + x.source : ''}</a>
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {x.tickers.map(t => (
+                    <button key={t.ticker} onClick={() => onAnalyze && onAnalyze(t.ticker)}
+                      className="font-mono text-[10px] text-electric-300 border border-white/10 hover:border-electric-500/40 rounded px-1.5 py-0.5 transition-all">
+                      {t.ticker}{t.dp != null && Math.abs(t.dp) >= 0.1 ? ' ' + fmtPct(t.dp, 1) : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showTrack && (
+        <div className="px-4 py-3 border-b border-white/5">
+          {!track && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking what flagged stocks did next…</div>}
+          {track && track.error && <div className="font-mono text-[11px] text-terminal-red">{track.error}</div>}
+          {track && !track.error && track.matured === 0 && (
+            <div className="font-mono text-[11px] text-slate-500">Collecting: {track.total} flag{track.total === 1 ? '' : 's'} logged. Results appear once flags are 1+ day old.</div>
+          )}
+          {track && !track.error && track.matured > 0 && (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr>{['Strength', 'Flags', 'Moved as predicted', 'Avg move'].map((h, i) => (
+                  <th key={h} style={{ textAlign: i ? 'right' : 'left', padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#475569' }}>{h}</th>
+                ))}</tr></thead>
+                <tbody>{track.buckets.concat(track.sectors && track.sectors.n ? [{ strength: 'Sector watch', n: track.sectors.n, hitRate: track.sectors.hitRate, avgMove: track.sectors.avgMove }] : [],
+                  track.ai && track.ai.n ? [{ strength: 'AI-inferred', n: track.ai.n, hitRate: track.ai.hitRate, avgMove: track.ai.avgMove }] : []).map(b => (
+                  <tr key={b.strength}>
+                    <td style={{ padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: RD_STRENGTH[b.strength] || '#cbd5e1' }}>{b.strength}</td>
+                    <td style={{ padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
+                    <td style={{ padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#cbd5e1', textAlign: 'right' }}>{b.hitRate == null ? '—' : b.hitRate.toFixed(0) + '%'}</td>
+                    <td style={{ padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, textAlign: 'right', color: b.avgMove == null ? '#475569' : b.avgMove >= 0 ? '#00ff88' : '#ff4466' }}>{b.avgMove == null ? '—' : fmtPct(b.avgMove)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+              <div className="font-mono text-[9px] text-slate-600 mt-1">Move since flagged, in the predicted direction (flags 1–10 days old).</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!data && !err && <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider animate-pulse">Loading news signals…</div>}
+      {err && <div className="p-6 text-center font-mono text-[11px] text-terminal-red">{err}</div>}
+      {data && !meta && (
+        <div className="p-6 text-center font-mono text-[11px] text-slate-500">Not started yet — run <span className="text-slate-300">installNewsRadarTrigger</span> once in Apps Script.</div>
+      )}
+      {data && meta && !sigs.length && (
+        <div className="p-6 text-center font-mono text-[11px] text-slate-500">No verified stock-level signals right now. Scanning every 30 minutes.</div>
+      )}
+      {shown.map(s => <RadarRow key={s.ticker} s={s} onAnalyze={onAnalyze} isMobile={isMobile} />)}
+      {sigs.length > 6 && (
+        <button onClick={() => setShowAll(v => !v)}
+          className="w-full py-2 font-mono text-[10px] uppercase tracking-wider text-slate-500 hover:text-electric-400 border-t border-white/5">
+          {showAll ? 'Show less' : `Show all ${sigs.length}`}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ── MC Score Leaders — whole universe, rescored automatically every day ──
 const lbColor = s => s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
 const LB_REGIME = { 'risk-off': ['#ff4466', 'Risk-off'], 'neutral': ['#ffb800', 'Neutral'], 'risk-on': ['#00ff88', 'Risk-on'] }
@@ -483,6 +673,9 @@ export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
           clickable onClick={() => setModal('discount')} isMobile={isMobile} />
       </div>
 
+
+      {/* News Radar */}
+      <NewsRadar onAnalyze={onAnalyze} isMobile={isMobile} />
 
       {/* MC Score Leaders */}
       <ScoreLeaders onAnalyze={onAnalyze} isMobile={isMobile} />
