@@ -436,10 +436,12 @@ function RadarRow({ s, onAnalyze, isMobile }) {
       <div className="flex flex-col items-end gap-1 flex-shrink-0">
         <span style={{ color: sc, borderColor: sc + '55', background: sc + '14' }}
           className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 rounded border">{s.strength}</span>
-        {s.confirmed
-          ? <span style={{ color: dc }} className="font-mono text-[10px] font-semibold">{fmtPct(s.dp)} today</span>
-          : s.capped ? <span className="font-mono text-[9px] text-slate-600">unconfirmed</span> : null}
-        {s.late && <span className="font-mono text-[9px] text-terminal-amber text-right leading-tight">late-entry risk:<br />already moved</span>}
+        {s.against
+          ? <span className="font-mono text-[9px] text-terminal-red text-right leading-tight">⚠ moving against<br />{fmtPct(s.dp)} today</span>
+          : s.confirmed
+            ? <span style={{ color: dc }} className="font-mono text-[10px] font-semibold">{fmtPct(s.dp)} today</span>
+            : s.capped ? <span className="font-mono text-[9px] text-slate-600">unconfirmed</span> : null}
+        {s.late && <span className="font-mono text-[9px] text-terminal-amber text-right leading-tight">late-entry risk:<br />{s.statedMove >= 10 ? `already moved ${s.statedMove}%` : 'already moved'}</span>}
       </div>
     </div>
   )
@@ -511,7 +513,10 @@ function NewsRadar({ onAnalyze, isMobile }) {
               <div className="flex-1 min-w-0">
                 <div className="font-mono text-[11px] text-slate-200">
                   <span className="font-semibold">{x.theme}</span>
-                  <span className="text-slate-600"> · {x.sources} sources · {x.moving ? `${x.moving} of ${x.tickers.length} moving` : 'not moving yet'}</span>
+                  <span className="text-slate-600"> · {x.sources} sources · </span>
+                  {x.moving ? <span className="text-terminal-green/80">{x.moving} of {x.tickers.length} moving with the news</span>
+                    : x.against ? <span className="text-terminal-red/90">⚠ {x.against} of {x.tickers.length} moving against the news</span>
+                    : <span className="text-slate-600">not moving yet</span>}
                 </div>
                 <a href={x.url || undefined} target="_blank" rel="noopener noreferrer"
                   className={`font-mono text-[10px] text-slate-400 hover:text-white block leading-snug ${isMobile ? '' : 'truncate'}`}>{x.headline}{x.source ? ' · ' + x.source : ''}</a>
