@@ -466,6 +466,8 @@ const pctColor = v => v == null ? '#475569' : v >= 0 ? '#00ff88' : '#ff4466'
 const BT_VERDICT = {
   'Evidence it works':    { c: '#00ff88', note: 'Top-ranked stocks beat bottom-ranked ones consistently — unlikely to be luck.' },
   'Weak evidence':        { c: '#ffb800', note: 'Some edge, but not strong enough to rule out luck.' },
+  'Mixed evidence':       { c: '#ffb800', note: 'The two views disagree: higher scores beat the market more often, but lower-scored stocks earned more on average — the score picks steadier stocks, not bigger winners.' },
+  'Works in reverse':     { c: '#ff4466', note: 'Lower-scored stocks consistently did better — these factors pointed the wrong way here.' },
   'No evidence it works': { c: '#ff4466', note: 'Ranking by these factors did not separate winners from losers.' },
   'Not enough history':   { c: '#64748b', note: 'Less than a year of prices — no verdict yet.' },
 }
@@ -506,6 +508,8 @@ function HistoryTest({ bt }) {
         <div className="font-mono text-[11px] text-slate-400 space-y-1 leading-relaxed">
           <div>Top 20% vs bottom 20%: <span className="text-slate-200">{pc(bt.spread)} per month</span><span className="text-slate-600"> (t = {bt.spreadT == null ? '—' : bt.spreadT.toFixed(1)})</span></div>
           <div>Top 20% beat the S&amp;P 500 in <span className="text-slate-200">{bt.topBeatSpy == null ? '—' : bt.topBeatSpy.toFixed(0)}%</span> of months <span className="text-slate-600">— the average stock did in {bt.allBeatSpy == null ? '—' : bt.allBeatSpy.toFixed(0)}%</span></div>
+          {bt.spreadMedian != null && <div>Typical month (median): top 20% vs bottom 20% <span className="text-slate-200">{pc(bt.spreadMedian)}</span><span className="text-slate-600"> — not moved by a few stocks that triple</span></div>}
+          {bt.topBeatBottom != null && <div>Top 20% beat the bottom 20% in <span className="text-slate-200">{bt.topBeatBottom.toFixed(0)}%</span> of months</div>}
           <div>For comparison, simple 12-month momentum alone: <span className="text-slate-200">{pc(bt.spreadMomentumOnly)} per month</span></div>
           <div className="text-slate-600">Rank correlation with next month (IC) {bt.ic == null ? '—' : bt.ic.toFixed(3)} · positive in {bt.icPositive == null ? '—' : bt.icPositive.toFixed(0)}% of months</div>
         </div>
