@@ -398,16 +398,17 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
     const value        = currentPrice != null ? currentPrice * p.qty : null
     const pnlAbs       = value != null ? value - cost : null
     const pnlPct       = pnlAbs != null ? (pnlAbs / cost) * 100 : null
-    // YTD start price: your buy price if bought this year (or the stock has no Dec 31 price → it was bought this year),
-    // otherwise the last close of the previous year
+    // YTD start price: your buy price if bought this year, otherwise the last close of the previous year.
+    // No Dec 31 price (listed this year, or a data gap) and no 2026 purchase date → no YTD, never a guess.
     const boughtThisYear = !!(p.buyDate && Number(p.buyDate.slice(0, 4)) === YEAR)
-    const noYearEnd      = q && q.price != null && q.ytdBase == null
-    const ytdStart       = boughtThisYear || noYearEnd ? p.buyPrice : (q?.ytdBase ?? null)
-    const ytdFrom        = boughtThisYear ? `your buy price (bought ${p.buyDate})` : noYearEnd ? 'your buy price (no Dec 31 price — bought this year)' : q?.ytdBase ? `the Dec 31 close ${fmtPrice(q.ytdBase)}` : null
+    const noYearEnd      = !!(q && q.price != null && q.ytdBase == null)
+    const ytdStart       = boughtThisYear ? p.buyPrice : (q?.ytdBase ?? null)
+    const ytdFrom        = boughtThisYear ? `your buy price (bought ${p.buyDate})` : q?.ytdBase ? `the Dec 31 close ${fmtPrice(q.ytdBase)}` : null
     const ytdAbs         = currentPrice != null && ytdStart ? (currentPrice - ytdStart) * p.qty : null
     const ytdPct         = currentPrice != null && ytdStart ? (currentPrice / ytdStart - 1) * 100 : null
-    const assumed        = !p.buyDate && !noYearEnd && q?.ytdBase != null
-    return { ...p, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed }
+    const assumed        = !p.buyDate && q?.ytdBase != null
+    const noStart        = noYearEnd && !boughtThisYear
+    return { ...p, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed, noStart }
   })
 
   const sorted = [...rows].sort((a, b) => {
@@ -432,6 +433,7 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
   totals.ytdStart = ytdRows.reduce((s, r) => s + r.ytdStart * r.qty, 0)
   totals.ytdPct   = totals.ytdStart > 0 ? (totals.ytd / totals.ytdStart) * 100 : null
   const assumedCount = rows.filter(r => r.assumed).length
+  const noStartRows  = rows.filter(r => r.noStart)
   const money = v => (v >= 0 ? '+' : '−') + '$' + fmtLarge(Math.abs(v))
   const moneyExact = v => (v >= 0 ? '+' : '−') + '$' + Math.round(Math.abs(v)).toLocaleString('en-US')
   const pnlColor = v => v >= 0 ? '#00ff88' : '#ff4466'
@@ -464,6 +466,11 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
           </div>
         )}
       </div>
+      {noStartRows.length > 0 && (
+        <div className="text-[10px] font-mono text-slate-600">
+          Not in the {YEAR} total: {noStartRows.map(r => r.ticker).join(', ')} — no Dec 31 price is available. If you bought {noStartRows.length === 1 ? 'it' : 'them'} in {YEAR}, add the purchase date with ✎ and {noStartRows.length === 1 ? 'it' : 'they'} will count from your buy price.
+        </div>
+      )}
       {assumedCount > 0 && (
         <div className="text-[10px] font-mono text-slate-600">
           {assumedCount} position{assumedCount === 1 ? '' : 's'} without a purchase date {assumedCount === 1 ? 'is' : 'are'} counted from the Dec 31 close. If you bought {assumedCount === 1 ? 'it' : 'any of them'} in {YEAR}, add the date with ✎ for an exact YTD figure.
@@ -538,12 +545,12 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                         ? <span style={{fontWeight:'700',color:r.pnlPct>=0?'#00ff88':'#ff4466'}}>{fmtPct(r.pnlPct)}</span>
                         : <span style={{color:'#475569'}}>—</span>}
                     </td>
-                    <td style={tdStyle()} title={r.ytdFrom ? `YTD from ${r.ytdFrom}` : 'Start-of-year price not available yet'}>
+                    <td style={tdStyle()} title={r.ytdFrom ? `YTD from ${r.ytdFrom}` : r.noStart ? 'No Dec 31 price available — add a purchase date (✎) if you bought it this year' : 'Start-of-year price not available yet'}>
                       {r.ytdAbs != null
                         ? <span style={{fontWeight:'700',color:pnlColor(r.ytdAbs)}}>{money(r.ytdAbs)}</span>
                         : <span style={{color:'#475569'}}>—</span>}
                     </td>
-                    <td style={tdStyle()} title={r.ytdFrom ? `YTD from ${r.ytdFrom}` : 'Start-of-year price not available yet'}>
+                    <td style={tdStyle()} title={r.ytdFrom ? `YTD from ${r.ytdFrom}` : r.noStart ? 'No Dec 31 price available — add a purchase date (✎) if you bought it this year' : 'Start-of-year price not available yet'}>
                       {r.ytdPct != null
                         ? <span style={{fontWeight:'700',color:pnlColor(r.ytdPct)}}>{fmtPct(r.ytdPct)}{r.assumed && <span style={{color:'#475569',fontWeight:400}}> *</span>}</span>
                         : <span style={{color:'#475569'}}>—</span>}
