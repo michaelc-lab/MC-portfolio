@@ -11,6 +11,7 @@ const COLS_PORTFOLIO = [
   { key: 'dd',           label: 'Δ ATH',        num: true },
   { key: 'dayChangePct', label: 'Δ Today',      num: true },
   { key: 'weekChangePct',label: 'Δ 7d',         num: true },
+  { key: 'ytdPct',       label: 'YTD',          num: true },
   { key: 'status',       label: 'Status'  },
 ]
 
@@ -24,6 +25,7 @@ const COLS_WATCHLIST = [
   { key: 'dd',           label: 'Δ ATH',        num: true },
   { key: 'dayChangePct', label: 'Δ Today',      num: true },
   { key: 'weekChangePct',label: 'Δ 7d',         num: true },
+  { key: 'ytdPct',       label: 'YTD',          num: true },
   { key: 'status',       label: 'Status'  },
 ]
 
@@ -49,6 +51,29 @@ function DdCell({ dd }) {
   return <span className={`font-mono ${cls}`}>{fmtPct(dd, 1)}</span>
 }
 
+const pctSpan = v => (
+  <span className={`font-mono text-[12px] ${pctClass(v) === 'positive' ? 'positive' : pctClass(v) === 'negative' ? 'negative' : 'neutral'}`}>
+    {v != null ? fmtPct(v) : '—'}
+  </span>
+)
+
+function renderCell(r, key) {
+  switch (key) {
+    case 'ticker':  return <td><span className="font-mono font-bold text-[13px] text-electric-300">{r.ticker}</span></td>
+    case 'company': return <td><span className="text-slate-300 text-[12px]">{r.company}</span></td>
+    case 'sector':  return <td><span className="font-mono text-[10px] uppercase tracking-wider text-slate-500 bg-white/5 px-2 py-0.5 rounded">{r.sector}</span></td>
+    case 'thesis':  return <td className="max-w-[200px]"><span className="text-slate-500 text-[11px] italic truncate block">{r.thesis || '—'}</span></td>
+    case 'price':   return <td className="text-right">{r.price == null ? <span className="dim text-[11px]">…</span> : <span className="font-mono font-semibold text-slate-200">{fmtPrice(r.price)}</span>}</td>
+    case 'ath':     return <td className="text-right"><span className="font-mono text-slate-500 text-[12px]">{r.ath ? fmtPrice(r.ath) : '—'}</span></td>
+    case 'dd':      return <td className="text-right"><DdCell dd={r.dd} /></td>
+    case 'dayChangePct':  return <td className="text-right">{pctSpan(r.dayChangePct)}</td>
+    case 'weekChangePct': return <td className="text-right">{pctSpan(r.weekChangePct)}</td>
+    case 'ytdPct':  return <td className="text-right" title={r.ytdBase ? `From ${fmtPrice(r.ytdBase)} — last close of ${r.ytdBaseDate ? r.ytdBaseDate.slice(0, 4) : 'last year'} (${r.ytdBaseDate || ''})` : 'Start-of-year price not available (listed this year, or not on Google Finance)'}>{pctSpan(r.ytdPct)}</td>
+    case 'status':  return <td><StatusBadge status={r.status} /></td>
+    default:        return <td />
+  }
+}
+
 export default function StockTable({ rows, isWatchlist = false, onAnalyze, isMobile }) {
   const [sort,   setSort]   = useState({ key: 'dd', dir: 'asc' })
   const [filter, setFilter] = useState({ q: '', sector: '', status: '' })
@@ -57,6 +82,7 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze, isMob
     { key: 'price',        label: 'Price',       num: true },
     { key: 'dayChangePct', label: 'Δ Today',     num: true },
     { key: 'dd',           label: 'Δ ATH',       num: true },
+    { key: 'ytdPct',       label: 'YTD',         num: true },
   ]
   const cols = isMobile ? COLS_MOBILE : (isWatchlist ? COLS_WATCHLIST : COLS_PORTFOLIO)
 
@@ -127,6 +153,7 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze, isMob
           <option value="dd">Sort: Δ ATH</option>
           <option value="dayChangePct">Sort: Δ Today</option>
           <option value="weekChangePct">Sort: Δ 7d</option>
+          <option value="ytdPct">Sort: YTD</option>
           <option value="price">Sort: Price</option>
         </select>
 
@@ -158,33 +185,7 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze, isMob
               ? <tr><td colSpan={cols.length + 1} className="text-center py-10 text-slate-600 font-mono text-[11px] uppercase tracking-wider">No matches</td></tr>
               : sorted.map(r => (
                 <tr key={r.ticker} className="group cursor-default">
-                  <td><span className="font-mono font-bold text-[13px] text-electric-300">{r.ticker}</span></td>
-                  <td><span className="text-slate-300 text-[12px]">{r.company}</span></td>
-                  <td><span className="font-mono text-[10px] uppercase tracking-wider text-slate-500 bg-white/5 px-2 py-0.5 rounded">{r.sector}</span></td>
-                  {isWatchlist && (
-                    <td className="max-w-[200px]">
-                      <span className="text-slate-500 text-[11px] italic truncate block">{r.thesis || '—'}</span>
-                    </td>
-                  )}
-                  <td className="text-right">
-                    {r.price == null
-                      ? <span className="dim text-[11px]">…</span>
-                      : <span className="font-mono font-semibold text-slate-200">{fmtPrice(r.price)}</span>
-                    }
-                  </td>
-                  <td className="text-right"><span className="font-mono text-slate-500 text-[12px]">{r.ath ? fmtPrice(r.ath) : '—'}</span></td>
-                  <td className="text-right"><DdCell dd={r.dd} /></td>
-                  <td className="text-right">
-                    <span className={`font-mono text-[12px] ${pctClass(r.dayChangePct) === 'positive' ? 'positive' : pctClass(r.dayChangePct) === 'negative' ? 'negative' : 'neutral'}`}>
-                      {r.dayChangePct != null ? fmtPct(r.dayChangePct) : '—'}
-                    </span>
-                  </td>
-                  <td className="text-right">
-                    <span className={`font-mono text-[12px] ${pctClass(r.weekChangePct) === 'positive' ? 'positive' : pctClass(r.weekChangePct) === 'negative' ? 'negative' : 'neutral'}`}>
-                      {r.weekChangePct != null ? fmtPct(r.weekChangePct) : '—'}
-                    </span>
-                  </td>
-                  <td><StatusBadge status={r.status} /></td>
+                  {cols.map(col => <React.Fragment key={col.key}>{renderCell(r, col.key)}</React.Fragment>)}
                   {onAnalyze && (
                     <td>
                       <button
