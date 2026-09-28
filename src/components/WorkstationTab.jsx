@@ -462,11 +462,67 @@ const th = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, lette
 const td = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, whiteSpace: 'nowrap' }
 const pctColor = v => v == null ? '#475569' : v >= 0 ? '#00ff88' : '#ff4466'
 
+// ── History test: the MC Score's price factors on 5 years of your stocks ──
+const BT_VERDICT = {
+  'Evidence it works':    { c: '#00ff88', note: 'Top-ranked stocks beat bottom-ranked ones consistently — unlikely to be luck.' },
+  'Weak evidence':        { c: '#ffb800', note: 'Some edge, but not strong enough to rule out luck.' },
+  'No evidence it works': { c: '#ff4466', note: 'Ranking by these factors did not separate winners from losers.' },
+  'Not enough history':   { c: '#64748b', note: 'Less than a year of prices — no verdict yet.' },
+}
+function HistoryTest({ bt }) {
+  const box = { background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: 14 }
+  const head = <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">History test · price factors on 5 years of your stocks</div>
+  if (!bt) return <div>{head}<div className="font-mono text-[11px] text-slate-500 animate-pulse">Loading…</div></div>
+  if (bt.error) return <div>{head}<div className="font-mono text-[11px] text-terminal-red">{bt.error}</div></div>
+  if (bt.pending) return (
+    <div>{head}<div className="font-mono text-[11px] text-slate-500 leading-relaxed">
+      {bt.done > 0 ? `Collecting 5 years of prices — ${bt.done} of ${bt.total} stocks so far. Continues automatically in the background.`
+        : 'Not started — run setupBacktest once in Apps Script (about 10–20 minutes, continues by itself).'}
+    </div></div>
+  )
+  const v = BT_VERDICT[bt.verdict] || BT_VERDICT['Not enough history']
+  const qs = bt.quintiles || [], mx = Math.max(0.01, ...qs.map(q => Math.abs(q.avgMonthly || 0)))
+  const pc = x => x == null ? '—' : (x >= 0 ? '+' : '') + x.toFixed(2) + '%'
+  return (
+    <div>
+      {head}
+      <div style={box} className="space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span style={{ color: v.c, border: `1px solid ${v.c}55`, background: v.c + '14', borderRadius: 4, padding: '2px 8px', fontSize: 11 }} className="font-mono font-semibold">{bt.verdict}</span>
+          <span className="font-mono text-[10px] text-slate-500">{bt.months} months · {bt.from} → {bt.to} · ~{bt.avgStocks} stocks/month</span>
+        </div>
+        <div className="font-mono text-[11px] text-slate-400">{v.note}</div>
+        <div className="space-y-1" aria-label="Average monthly return by score group">
+          {qs.map(q => (
+            <div key={q.q} className="flex items-center gap-2 font-mono text-[10px]">
+              <span className="text-slate-500 w-28 flex-shrink-0">{q.q === 5 ? 'Top 20%' : q.q === 1 ? 'Bottom 20%' : `Group ${q.q}`}</span>
+              <div className="flex-1 h-2 rounded bg-white/5 overflow-hidden">
+                <div style={{ width: `${Math.abs(q.avgMonthly || 0) / mx * 100}%`, height: '100%', background: (q.avgMonthly || 0) >= 0 ? '#00ff88' : '#ff4466', opacity: 0.35 + q.q * 0.12 }} />
+              </div>
+              <span style={{ color: (q.avgMonthly || 0) >= 0 ? '#00ff88' : '#ff4466' }} className="w-16 text-right">{pc(q.avgMonthly)}/mo</span>
+            </div>
+          ))}
+        </div>
+        <div className="font-mono text-[11px] text-slate-400 space-y-1 leading-relaxed">
+          <div>Top 20% vs bottom 20%: <span className="text-slate-200">{pc(bt.spread)} per month</span><span className="text-slate-600"> (t = {bt.spreadT == null ? '—' : bt.spreadT.toFixed(1)})</span></div>
+          <div>Top 20% beat the S&amp;P 500 in <span className="text-slate-200">{bt.topBeatSpy == null ? '—' : bt.topBeatSpy.toFixed(0)}%</span> of months <span className="text-slate-600">— the average stock did in {bt.allBeatSpy == null ? '—' : bt.allBeatSpy.toFixed(0)}%</span></div>
+          <div>For comparison, simple 12-month momentum alone: <span className="text-slate-200">{pc(bt.spreadMomentumOnly)} per month</span></div>
+          <div className="text-slate-600">Rank correlation with next month (IC) {bt.ic == null ? '—' : bt.ic.toFixed(3)} · positive in {bt.icPositive == null ? '—' : bt.icPositive.toFixed(0)}% of months</div>
+        </div>
+        <div className="font-mono text-[9px] text-slate-600 leading-relaxed space-y-0.5">
+          {(bt.caveats || []).map((x, i) => <div key={i}>· {x}</div>)}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onGenerate }) {
   const [openKey, setOpenKey] = useState(null)
   const [showTrack, setShowTrack] = useState(false)
   const [track, setTrack] = useState(null)
   const [trackLoading, setTrackLoading] = useState(false)
+  const [bt, setBt] = useState(null)
 
   if (!mc) {
     return (
@@ -489,6 +545,7 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
   const toggleTrack = async () => {
     const next = !showTrack
     setShowTrack(next)
+    if (next && !bt) jsonp(APPS_SCRIPT_URL + '?action=getBacktest').then(setBt).catch(e => setBt({ error: e.message }))
     if (!next || track || trackLoading) return
     setTrackLoading(true)
     try { setTrack(await jsonp(APPS_SCRIPT_URL + '?action=getScoreTrackRecord')) }
@@ -617,8 +674,9 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
       {/* Track record */}
       {showTrack && (
         <div className="mt-4 pt-4 border-t border-white/5">
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">
-            Model track record · 30-day return after each score, vs S&amp;P 500
+          <HistoryTest bt={bt} />
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2 mt-5">
+            Live track record · 30-day return after each score, vs S&amp;P 500
           </div>
           {trackLoading && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking every past score against what happened next…</div>}
           {track && track.error && <div className="font-mono text-[11px] text-terminal-red">{track.error}</div>}
@@ -639,15 +697,15 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
                     ))}</tr>
                   </thead>
                   <tbody>
-                    {track.buckets.map(b => (
-                      <tr key={b.label}>
-                        <td style={{ ...td, color: '#cbd5e1' }}>{b.label}</td>
+                    {track.buckets.map(b => { const base = b.label.startsWith('All stocks'); return (
+                      <tr key={b.label} style={base ? { borderTop: '1px solid rgba(148,163,184,0.15)' } : undefined}>
+                        <td style={{ ...td, color: base ? '#64748b' : '#cbd5e1', fontStyle: base ? 'italic' : 'normal' }}>{b.label}</td>
                         <td style={{ ...td, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
                         <td style={{ ...td, textAlign: 'right', color: pctColor(b.avgReturn) }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
                         <td style={{ ...td, fontWeight: 700, textAlign: 'right', color: pctColor(b.avgVsSpy) }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
                         <td style={{ ...td, color: '#94a3b8', textAlign: 'right' }}>{b.beatSpyRate == null ? '—' : b.beatSpyRate.toFixed(0) + '%'}</td>
                       </tr>
-                    ))}
+                    ) })}
                   </tbody>
                 </table>
               </div>
@@ -682,7 +740,7 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
                 </div>
               )}
               <div className="font-mono text-[10px] text-slate-600 leading-relaxed">
-                {track.matured} outcomes. A working model shows Strong Buy &gt; Buy &gt; Hold &gt; Sell in "vs S&amp;P 500".
+                {track.matured} outcomes. A working model shows Strong Buy &gt; Buy &gt; Hold &gt; Sell in "vs S&amp;P 500" — and Strong Buy clearly above the "All stocks" baseline.
                 {' '}{track.learning && track.learning.active ? `Weights self-tuned from ${track.learning.periods} independent periods.` : 'Weights stay at the research base until ~3 months of significant evidence.'}
               </div>
             </div>
