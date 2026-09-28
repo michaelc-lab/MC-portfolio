@@ -52,6 +52,8 @@ async function saveToSheet(userId, portfolios) {
 }
 
 // ── Quote fetcher ─────────────────────────────────────────────
+const YEAR = new Date().getFullYear()
+
 async function fetchQuote(ticker) {
   const now = Date.now()
   if (QUOTE_CACHE[ticker] && now - QUOTE_CACHE[ticker].ts < QUOTE_TTL) return QUOTE_CACHE[ticker].data
@@ -129,11 +131,15 @@ function CreateModal({ onClose, onCreate }) {
 }
 
 // ── Add Position Modal ────────────────────────────────────────
-function AddPositionModal({ onClose, onAdd }) {
-  const [ticker, setTicker] = useState('')
-  const [buyPrice, setBuyPrice] = useState('')
-  const [qty, setQty] = useState('')
+function AddPositionModal({ onClose, onAdd, initial }) {
+  const editing = !!initial
+  const [ticker, setTicker] = useState(initial ? initial.ticker : '')
+  const [buyPrice, setBuyPrice] = useState(initial ? String(initial.buyPrice) : '')
+  const [qty, setQty] = useState(initial ? String(initial.qty) : '')
+  const [buyDate, setBuyDate] = useState(initial && initial.buyDate ? initial.buyDate : '')
   const [error, setError] = useState('')
+  const today = new Date().toISOString().slice(0, 10)
+  const year = new Date().getFullYear()
 
   const handleAdd = () => {
     const t = ticker.trim().toUpperCase()
@@ -142,7 +148,10 @@ function AddPositionModal({ onClose, onAdd }) {
     if (!t) return setError('Enter a ticker')
     if (isNaN(p) || p <= 0) return setError('Enter a valid buy price')
     if (isNaN(q) || q <= 0) return setError('Enter a valid quantity')
-    onAdd({ ticker: t, buyPrice: p, qty: q, addedAt: Date.now() })
+    if (buyDate && buyDate > today) return setError('Purchase date cannot be in the future')
+    const pos = { ticker: t, buyPrice: p, qty: q, addedAt: initial ? (initial.addedAt || Date.now()) : Date.now() }
+    if (buyDate) pos.buyDate = buyDate
+    onAdd(pos)
     onClose()
   }
 
@@ -150,13 +159,13 @@ function AddPositionModal({ onClose, onAdd }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="panel-bright w-full max-w-sm mx-4 p-6 animate-slide-up">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="font-display font-bold text-[16px] text-white">Add Position</h2>
+          <h2 className="font-display font-bold text-[16px] text-white">{editing ? 'Edit Position' : 'Add Position'}</h2>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><X size={18} /></button>
         </div>
         <div className="space-y-4">
           <div>
             <label className="block text-[11px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Ticker</label>
-            <input autoFocus value={ticker} onChange={e => { setTicker(e.target.value.toUpperCase()); setError('') }}
+            <input autoFocus={!editing} disabled={editing} value={ticker} onChange={e => { setTicker(e.target.value.toUpperCase()); setError('') }}
               placeholder="NVDA" onKeyDown={e => e.key === 'Enter' && handleAdd()}
               className="w-full bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[13px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-electric-500/40 uppercase" />
           </div>
@@ -174,11 +183,17 @@ function AddPositionModal({ onClose, onAdd }) {
                 className="w-full bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[13px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-electric-500/40" />
             </div>
           </div>
+          <div>
+            <label className="block text-[11px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Purchase date (optional)</label>
+            <input value={buyDate} onChange={e => { setBuyDate(e.target.value); setError('') }} type="date" max={today}
+              className="w-full bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[13px] font-mono text-slate-200 focus:outline-none focus:border-electric-500/40" />
+            <div className="text-[10px] font-mono text-slate-600 mt-1">Used for YTD P&amp;L. Leave empty if you bought before {year}.</div>
+          </div>
           {error && <div className="text-[11px] font-mono text-terminal-red">{error}</div>}
         </div>
         <div className="flex gap-3 mt-5">
           <button onClick={onClose} className="flex-1 px-4 py-2 rounded border border-white/10 text-[12px] font-mono text-slate-500 hover:text-slate-300 transition-all">Cancel</button>
-          <button onClick={handleAdd} className="flex-1 btn-primary px-4 py-2 rounded text-[12px] font-mono font-semibold uppercase tracking-wider">Add</button>
+          <button onClick={handleAdd} className="flex-1 btn-primary px-4 py-2 rounded text-[12px] font-mono font-semibold uppercase tracking-wider">{editing ? 'Save' : 'Add'}</button>
         </div>
       </div>
     </div>
@@ -354,10 +369,11 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
 }
 
 // ── Investment Table ──────────────────────────────────────────
-function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
+function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
   const [quotes, setQuotes]       = useState({})
   const [loading, setLoading]     = useState(new Set())
   const [showModal, setShowModal] = useState(false)
+  const [editPos, setEditPos]     = useState(null)
   const [sort, setSort]           = useState({ key: null, dir: 'desc' })
 
   useEffect(() => {
@@ -382,7 +398,16 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
     const value        = currentPrice != null ? currentPrice * p.qty : null
     const pnlAbs       = value != null ? value - cost : null
     const pnlPct       = pnlAbs != null ? (pnlAbs / cost) * 100 : null
-    return { ...p, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null }
+    // YTD start price: your buy price if bought this year (or the stock has no Dec 31 price → it was bought this year),
+    // otherwise the last close of the previous year
+    const boughtThisYear = !!(p.buyDate && Number(p.buyDate.slice(0, 4)) === YEAR)
+    const noYearEnd      = q && q.price != null && q.ytdBase == null
+    const ytdStart       = boughtThisYear || noYearEnd ? p.buyPrice : (q?.ytdBase ?? null)
+    const ytdFrom        = boughtThisYear ? `your buy price (bought ${p.buyDate})` : noYearEnd ? 'your buy price (no Dec 31 price — bought this year)' : q?.ytdBase ? `the Dec 31 close ${fmtPrice(q.ytdBase)}` : null
+    const ytdAbs         = currentPrice != null && ytdStart ? (currentPrice - ytdStart) * p.qty : null
+    const ytdPct         = currentPrice != null && ytdStart ? (currentPrice / ytdStart - 1) * 100 : null
+    const assumed        = !p.buyDate && !noYearEnd && q?.ytdBase != null
+    return { ...p, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed }
   })
 
   const sorted = [...rows].sort((a, b) => {
@@ -401,6 +426,15 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
   }, { cost: 0, value: 0 })
   totals.pnl    = totals.value - totals.cost
   totals.pnlPct = totals.cost > 0 ? (totals.pnl / totals.cost) * 100 : null
+  // YTD for the whole portfolio: total YTD $ ÷ total starting value (weighted, as brokers show it)
+  const ytdRows = rows.filter(r => r.ytdAbs != null)
+  totals.ytd      = ytdRows.reduce((s, r) => s + r.ytdAbs, 0)
+  totals.ytdStart = ytdRows.reduce((s, r) => s + r.ytdStart * r.qty, 0)
+  totals.ytdPct   = totals.ytdStart > 0 ? (totals.ytd / totals.ytdStart) * 100 : null
+  const assumedCount = rows.filter(r => r.assumed).length
+  const money = v => (v >= 0 ? '+' : '−') + '$' + fmtLarge(Math.abs(v))
+  const moneyExact = v => (v >= 0 ? '+' : '−') + '$' + Math.round(Math.abs(v)).toLocaleString('en-US')
+  const pnlColor = v => v >= 0 ? '#00ff88' : '#ff4466'
 
   const SH = (label, key) => (
     <th style={thStyle('right', !!key)}
@@ -411,12 +445,30 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center">
+      <div className="flex items-center gap-4 flex-wrap">
         <button onClick={() => setShowModal(true)}
           className="btn-primary px-4 py-2 rounded text-[11px] font-mono font-semibold uppercase tracking-wider flex items-center gap-1.5">
           <Plus size={12} /> Add Position
         </button>
+        {ytdRows.length > 0 && (
+          <div className="flex items-baseline gap-5 flex-wrap font-mono ml-auto" data-testid="ytd-summary">
+            <span className="text-[12px] text-slate-500">{YEAR} so far{' '}
+              <span style={{ color: pnlColor(totals.ytd), fontWeight: 700, fontSize: '15px' }}>{moneyExact(totals.ytd)}</span>{' '}
+              <span style={{ color: pnlColor(totals.ytd), fontWeight: 600 }}>({fmtPct(totals.ytdPct)})</span>
+            </span>
+            {totals.value > 0 && (
+              <span className="text-[12px] text-slate-500">All-time{' '}
+                <span style={{ color: pnlColor(totals.pnl), fontWeight: 600 }}>{moneyExact(totals.pnl)} ({fmtPct(totals.pnlPct)})</span>
+              </span>
+            )}
+          </div>
+        )}
       </div>
+      {assumedCount > 0 && (
+        <div className="text-[10px] font-mono text-slate-600">
+          {assumedCount} position{assumedCount === 1 ? '' : 's'} without a purchase date {assumedCount === 1 ? 'is' : 'are'} counted from the Dec 31 close. If you bought {assumedCount === 1 ? 'it' : 'any of them'} in {YEAR}, add the date with ✎ for an exact YTD figure.
+        </div>
+      )}
 
       {positions.length === 0 ? (
         <div className="panel p-12 text-center">
@@ -438,6 +490,8 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
               <col style={{width:'100px'}} />
               <col style={{width:'105px'}} />
               <col style={{width:'105px'}} />
+              <col style={{width:'115px'}} />
+              <col style={{width:'100px'}} />
             </colgroup>
             <thead>
               <tr>
@@ -450,6 +504,8 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
                 {SH('Mkt Value',      'value')}
                 {SH('P&L ($)',        'pnlAbs')}
                 {SH('P&L (%)',        'pnlPct')}
+                {SH(`YTD P&L ($)`,    'ytdAbs')}
+                {SH(`YTD P&L (%)`,    'ytdPct')}
                 {SH('Day Chg',        'dayChangePct')}
                 <th style={thStyle('right')}></th>
               </tr>
@@ -482,6 +538,16 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
                         ? <span style={{fontWeight:'700',color:r.pnlPct>=0?'#00ff88':'#ff4466'}}>{fmtPct(r.pnlPct)}</span>
                         : <span style={{color:'#475569'}}>—</span>}
                     </td>
+                    <td style={tdStyle()} title={r.ytdFrom ? `YTD from ${r.ytdFrom}` : 'Start-of-year price not available yet'}>
+                      {r.ytdAbs != null
+                        ? <span style={{fontWeight:'700',color:pnlColor(r.ytdAbs)}}>{money(r.ytdAbs)}</span>
+                        : <span style={{color:'#475569'}}>—</span>}
+                    </td>
+                    <td style={tdStyle()} title={r.ytdFrom ? `YTD from ${r.ytdFrom}` : 'Start-of-year price not available yet'}>
+                      {r.ytdPct != null
+                        ? <span style={{fontWeight:'700',color:pnlColor(r.ytdPct)}}>{fmtPct(r.ytdPct)}{r.assumed && <span style={{color:'#475569',fontWeight:400}}> *</span>}</span>
+                        : <span style={{color:'#475569'}}>—</span>}
+                    </td>
                     <td style={tdStyle()}>
                       {r.dayChangePct != null
                         ? <span style={{color:r.dayChangePct>0?'#00ff88':r.dayChangePct<0?'#ff4466':'#64748b'}}>{fmtPct(r.dayChangePct)}</span>
@@ -494,6 +560,10 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
                             style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#38bdf8',border:'1px solid rgba(14,165,233,0.2)',padding:'2px 8px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>
                             Analyze →
                           </button>
+                        )}
+                        {onUpdate && (
+                          <button onClick={() => setEditPos(positions.find(p => p.ticker === r.ticker))} title="Edit quantity, buy price or purchase date" aria-label={`Edit ${r.ticker}`}
+                            style={{color:'#64748b',background:'transparent',border:'none',cursor:'pointer',fontSize:'13px'}}>✎</button>
                         )}
                         <button onClick={() => onRemove(r.ticker)} style={{color:'#475569',background:'transparent',border:'none',cursor:'pointer',display:'flex',alignItems:'center'}}>
                           <X size={13} />
@@ -523,6 +593,12 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
                   <td style={{padding:'12px',textAlign:'right',fontFamily:'IBM Plex Mono,monospace',fontWeight:'700',fontSize:'13px',color:totals.pnlPct!=null&&totals.pnlPct>=0?'#00ff88':'#ff4466'}}>
                     {totals.pnlPct != null ? fmtPct(totals.pnlPct) : '—'}
                   </td>
+                  <td style={{padding:'12px',textAlign:'right',fontFamily:'IBM Plex Mono,monospace',fontWeight:'700',fontSize:'13px',color:pnlColor(totals.ytd)}}>
+                    {ytdRows.length ? money(totals.ytd) : '—'}
+                  </td>
+                  <td style={{padding:'12px',textAlign:'right',fontFamily:'IBM Plex Mono,monospace',fontWeight:'700',fontSize:'13px',color:totals.ytdPct!=null&&totals.ytdPct>=0?'#00ff88':'#ff4466'}}>
+                    {totals.ytdPct != null ? fmtPct(totals.ytdPct) : '—'}
+                  </td>
                   <td colSpan={2}></td>
                 </tr>
               )}
@@ -531,6 +607,7 @@ function InvestmentTable({ positions, onRemove, onAdd, onAnalyze }) {
         </div>
       )}
       {showModal && <AddPositionModal onClose={() => setShowModal(false)} onAdd={(pos) => { onAdd(pos); setShowModal(false) }} />}
+      {editPos && <AddPositionModal initial={editPos} onClose={() => setEditPos(null)} onAdd={(pos) => { onUpdate(pos); setEditPos(null) }} />}
     </div>
   )
 }
@@ -747,6 +824,11 @@ export default function CustomPortfolios({ onAnalyze }) {
         ? { ...p, positions: [...p.positions, position] } : p
     ))
   }
+  const handleUpdateInvestment = (position) => {
+    persistPortfolios(portfolios.map(p =>
+      p.id === activeId ? { ...p, positions: p.positions.map(pos => pos.ticker === position.ticker ? { ...pos, ...position, buyDate: position.buyDate } : pos) } : p
+    ))
+  }
   const handleRemove = (ticker) => {
     persistPortfolios(portfolios.map(p =>
       p.id === activeId ? { ...p, positions: p.positions.filter(pos => pos.ticker !== ticker) } : p
@@ -871,7 +953,7 @@ export default function CustomPortfolios({ onAnalyze }) {
           </div>
           {active.type === 'tracking'
             ? <TrackingTable positions={active.positions} onRemove={handleRemove} onAdd={handleAddTracking} onAnalyze={onAnalyze} />
-            : <InvestmentTable positions={active.positions} onRemove={handleRemove} onAdd={handleAddInvestment} onAnalyze={onAnalyze} />
+            : <InvestmentTable positions={active.positions} onRemove={handleRemove} onAdd={handleAddInvestment} onUpdate={handleUpdateInvestment} onAnalyze={onAnalyze} />
           }
         </div>
       )}
