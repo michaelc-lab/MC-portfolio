@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { oddsLabel } from '../lib/odds'
 import { TrendingUp, TrendingDown, Zap, AlertTriangle, Activity, Calendar, Sparkles, Newspaper } from 'lucide-react'
 import { fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
 
@@ -459,6 +460,7 @@ function RadarDetails({ s, onAnalyze, onClose }) {
       </div>
       <div className="mt-3 space-y-1.5 text-[12px] text-slate-400">
         <div>{rdLinkPlain(s)}</div>
+        {s.sec && <div className="text-terminal-green/90">Confirmed by an official SEC filing: <a href={s.sec.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.sec.form} on {s.sec.date}{s.sec.items && s.sec.items.length ? ' — ' + s.sec.items.join(', ') : ''}</a></div>}
         {s.aiOnly
           ? <div className="text-terminal-amber/90">AI reasoning: {s.aiReason || s.evidence}</div>
           : s.evidence ? <div className="text-terminal-green/80">Evidence: {s.evidenceUrl ? <a href={s.evidenceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a> : s.evidence}</div> : null}
@@ -485,7 +487,7 @@ function RadarCard({ s, open, onToggle, onAnalyze, names }) {
       <div className="text-[13px] text-slate-300 leading-snug mt-3 min-h-[36px]">{rdLine(s)}</div>
       <div className="flex items-center justify-between mt-4 text-[11px]">
         <span className="flex gap-1" aria-label={`Confidence ${s.strength}`}>{rdDots(s.strength).map((on, i) => <span key={i} className={`w-1.5 h-1.5 rounded-full ${on ? 'bg-slate-200' : 'bg-slate-700'}`} />)}</span>
-        <span className={st.tone}>{st.text}<span className="text-slate-600"> · {rdAge(s.time)}</span></span>
+        <span className={st.tone}>{st.text}{s.sec && <span className="text-terminal-green/80"> · SEC ✓</span>}<span className="text-slate-600"> · {rdAge(s.time)}</span></span>
       </div>
     </button>
   )
@@ -648,7 +650,7 @@ function LeaderRow({ r, i, onAnalyze, isMobile, weak }) {
       <span className="flex items-center gap-2 flex-shrink-0 ml-auto">
         {!isMobile && r.low !== '' && r.high !== '' && <span className="font-mono text-[9px] text-slate-600">{Number(r.low).toFixed(1)}–{Number(r.high).toFixed(1)}</span>}
         <span style={{ color: c, borderColor: c + '55', background: c + '14' }} className="font-mono text-[12px] font-bold px-2 py-0.5 rounded border w-12 text-center">{Number(r.score).toFixed(1)}</span>
-        <span style={{ color: c }} className="font-mono text-[10px] w-[72px] text-right">{r.label}</span>
+        <span style={{ color: c }} className="font-mono text-[10px] w-[96px] text-right">{oddsLabel(r.label)}</span>
       </span>
     </button>
   )
