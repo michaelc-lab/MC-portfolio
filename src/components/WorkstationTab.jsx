@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { oddsLabel } from '../lib/odds'
 import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Shield, Sparkles } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
@@ -418,9 +419,10 @@ function DualChart({ chartA, chartB, tickerA, tickerB }) {
 
 // ── MC Score panel (v2) ───────────────────────────────────────
 const MC_SCORE_TIP = `<b>MC Score (0–10)</b> — computed by a fixed-rule model: 7 factors, 30+ research-backed signals. AI never picks the number.<br/><br/>
-  🟢 8–10 Strong Buy · 6.5–8 Buy<br/>
-  🟡 4.5–6.5 Hold<br/>
-  🔴 3–4.5 Sell · 0–3 Strong Sell<br/><br/>
+  🟢 8–10 very favorable · 6.5–8 favorable odds<br/>
+  🟡 4.5–6.5 neutral<br/>
+  🔴 3–4.5 unfavorable · 0–3 very unfavorable odds<br/><br/>
+  <b>What history shows on your stocks:</b> higher scores gave steadier results that beat the S&amp;P 500 more often — not bigger winners. Low scores were mostly flat, with rare big jumps.<br/><br/>
   <i>Benchmarked against sector medians, adjusted for the market regime, and it learns from its own 30-day results.</i>`
 
 const RANGE_TIP = `<b>Likely range</b> — how far the score could move if the data were slightly different.<br/>Narrow = factors agree. Wide = the stock is controversial: strong on some factors, weak on others.<br/><br/><i>Two stocks with the same score but different ranges are very different bets.</i>`
@@ -585,14 +587,14 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
             <span style={{ color: col, fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 56, lineHeight: 1 }}>{mc.score.toFixed(1)}</span>
             <span className="font-mono text-[13px] text-slate-600 mb-2">/10</span>
           </div>
-          <div style={{ color: col }} className="font-display font-bold text-[18px] mt-1">{mc.label}</div>
+          <div style={{ color: col }} className="font-display font-bold text-[18px] mt-1">{oddsLabel(mc.label)} odds</div>
           <div className="relative h-2 rounded mt-3" style={{ background: 'linear-gradient(90deg,#ff4466 0%,#ff4466 30%,#ffb800 45%,#ffb800 65%,#00ff88 80%,#00ff88 100%)', opacity: 0.85 }}>
             <div className="absolute -top-1 h-4 rounded-sm"
               style={{ left: range.low * 10 + '%', width: Math.max(0.5, (range.high - range.low) * 10) + '%', background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)' }} />
             <div style={{ left: `calc(${mc.score * 10}% - 6px)`, borderColor: col }} className="absolute -top-1 w-3 h-4 rounded-sm bg-navy-950 border-2" />
           </div>
           <div className="flex justify-between font-mono text-[8px] text-slate-600 mt-1 uppercase tracking-wider">
-            <span>Sell</span><span>Hold</span><span>Buy</span>
+            <span>Unfavorable</span><span>Neutral</span><span>Favorable</span>
           </div>
           <div className="mt-3 space-y-1.5">
             <div className="font-mono text-[10px] text-slate-400">
@@ -701,7 +703,7 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
                   <tbody>
                     {track.buckets.map(b => { const base = b.label.startsWith('All stocks'); return (
                       <tr key={b.label} style={base ? { borderTop: '1px solid rgba(148,163,184,0.15)' } : undefined}>
-                        <td style={{ ...td, color: base ? '#64748b' : '#cbd5e1', fontStyle: base ? 'italic' : 'normal' }}>{b.label}</td>
+                        <td style={{ ...td, color: base ? '#64748b' : '#cbd5e1', fontStyle: base ? 'italic' : 'normal' }}>{oddsLabel(b.label)}</td>
                         <td style={{ ...td, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
                         <td style={{ ...td, textAlign: 'right', color: pctColor(b.avgReturn) }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
                         <td style={{ ...td, fontWeight: 700, textAlign: 'right', color: pctColor(b.avgVsSpy) }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
@@ -742,7 +744,7 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
                 </div>
               )}
               <div className="font-mono text-[10px] text-slate-600 leading-relaxed">
-                {track.matured} outcomes. A working model shows Strong Buy &gt; Buy &gt; Hold &gt; Sell in "vs S&amp;P 500" — and Strong Buy clearly above the "All stocks" baseline.
+                {track.matured} outcomes. A working model shows Very favorable &gt; Favorable &gt; Neutral &gt; Unfavorable in "vs S&amp;P 500" — and Very favorable clearly above the "All stocks" baseline.
                 {' '}{track.learning && track.learning.active ? `Weights self-tuned from ${track.learning.periods} independent periods.` : 'Weights stay at the research base until ~3 months of significant evidence.'}
               </div>
             </div>
