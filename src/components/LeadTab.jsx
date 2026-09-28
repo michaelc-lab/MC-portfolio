@@ -509,8 +509,9 @@ function NewsRadar({ onAnalyze, isMobile, names }) {
         <div className="mb-5 rounded-lg border border-white/10 p-4">
           {!track && <div className="text-[12px] text-slate-500 animate-pulse">Checking what flagged stocks did next…</div>}
           {track && track.error && <div className="text-[12px] text-terminal-red">{track.error}</div>}
-          {track && !track.error && track.matured === 0 && <div className="text-[12px] text-slate-500">Collecting results — {track.total} signal{track.total === 1 ? '' : 's'} logged so far. Results appear once signals are a day old.</div>}
-          {track && !track.error && track.matured > 0 && (
+          {track && !track.error && track.computing && <div className="text-[12px] text-slate-500">Preparing your track record — it's calculated in the background after each scan. Check back in a few minutes.</div>}
+          {track && !track.error && !track.computing && track.matured === 0 && <div className="text-[12px] text-slate-500">Collecting results — {track.total} signal{track.total === 1 ? '' : 's'} logged so far. Results appear once signals are a day old.</div>}
+          {track && !track.error && !track.computing && track.matured > 0 && (
             <div className="space-y-1.5 text-[12px]">
               {track.buckets.concat(track.sectors && track.sectors.n ? [{ strength: 'Sector pulse', ...track.sectors }] : [], track.ai && track.ai.n ? [{ strength: 'AI-inferred', ...track.ai }] : []).filter(b => b.n).map(b => (
                 <div key={b.strength} className="flex justify-between text-slate-400">
