@@ -549,7 +549,6 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
   const toggleTrack = async () => {
     const next = !showTrack
     setShowTrack(next)
-    if (next && !bt) jsonp(APPS_SCRIPT_URL + '?action=getBacktest').then(setBt).catch(e => setBt({ error: e.message }))
     if (!next || track || trackLoading) return
     setTrackLoading(true)
     try { setTrack(await jsonp(APPS_SCRIPT_URL + '?action=getScoreTrackRecord')) }
@@ -678,8 +677,7 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
       {/* Track record */}
       {showTrack && (
         <div className="mt-4 pt-4 border-t border-white/5">
-          <HistoryTest bt={bt} />
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2 mt-5">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">
             Live track record · 30-day return after each score, vs S&amp;P 500
           </div>
           {trackLoading && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking every past score against what happened next…</div>}
@@ -831,6 +829,88 @@ const StockSelector = React.memo(function StockSelector({ allStocks, loading, on
 })
 
 // ── Analyze view ──────────────────────────────────────────────
+// ── Decision check: only confirmed information, and whether it agrees ──
+let RD_BOARD_P = null
+const rdBoardOnce = () => RD_BOARD_P || (RD_BOARD_P = jsonp(APPS_SCRIPT_URL + '?action=getNewsRadar').catch(e => { RD_BOARD_P = null; throw e }))
+export function decisionRows(data, board) {
+  const rows = []
+  const pc = data.priceCheck || {}
+  rows.push(pc.status === 'ok' ? { tone: 'ok', dir: 0, text: `Price confirmed by two sources (Google Finance ${fmtPrice(pc.gf)} · Finnhub ${fmtPrice(pc.fh)})` }
+    : pc.status === 'warn' ? { tone: 'warn', dir: 0, gate: true, text: `Price sources disagree by ${Math.abs(pc.diff).toFixed(1)}% (Google Finance ${fmtPrice(pc.gf)} vs Finnhub ${fmtPrice(pc.fh)}) — check your broker before trading` }
+    : { tone: 'na', dir: 0, text: 'Price from one source only' })
+  const mc = data.mcScore
+  if (mc && mc.score != null) {
+    const s = mc.score, d = s >= 6.5 ? 1 : s <= 4 ? -1 : 0
+    rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d,
+      text: `${d > 0 ? 'Favorable odds' : d < 0 ? 'Unfavorable odds' : 'Neutral odds'} — MC Score ${s.toFixed(1)}${mc.universe && mc.universe.rank ? ` (#${mc.universe.rank} of ${mc.universe.n})` : ''}`,
+      sub: d > 0 ? 'Historically: steadier results, not bigger winners' : d < 0 ? 'Historically: mostly flat, with rare big jumps' : null })
+  }
+  if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
+  else if (board.error) rows.push({ tone: 'na', dir: 0, text: 'News unavailable right now' })
+  else {
+    const sig = (board.signals || []).find(x => x.ticker === data.ticker)
+    if (!sig || !sig.dir) rows.push({ tone: 'na', dir: 0, text: 'No significant news in the last 2 days' })
+    else {
+      const d = sig.against || sig.aiOnly ? 0 : sig.dir
+      rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d, url: sig.sec ? sig.sec.url : sig.url,
+        text: `${sig.dir > 0 ? 'Positive' : 'Negative'} news${sig.sec ? ` — confirmed by an official SEC filing (${sig.sec.form}, ${sig.sec.date})` : sig.aiOnly ? ' — inferred by AI, not confirmed' : ' — not officially confirmed'}${sig.against ? ', but the stock is moving against it' : ''}` })
+    }
+  }
+  if (data.secOn) {
+    const f = (data.sec || [])[0]
+    rows.push(f ? { tone: f.negative ? 'neg' : 'info', dir: f.negative ? -1 : 0, url: f.url,
+        text: f.items && f.items.length ? `Official filing ${f.date}: ${f.items.join(', ')}` : `Official company filing (${f.form}) on ${f.date} — open it to see what the company reported` }
+      : { tone: 'na', dir: 0, text: 'No official company filings in the last 7 days' })
+  }
+  const since = Date.now() - 90 * 864e5
+  const recent = (data.insiders || []).filter(x => new Date(x.transactionDate || x.filingDate).getTime() >= since)
+  const buys = recent.filter(x => x.transactionCode === 'P' && x.isPlanBuy !== true), sells = recent.filter(x => x.transactionCode === 'S')
+  rows.push(buys.length ? { tone: 'pos', dir: 1, text: `Insiders bought shares with their own money (${buys.length} purchase${buys.length === 1 ? '' : 's'} in 90 days)` }
+    : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — common, often pre-planned` }
+    : { tone: 'na', dir: 0, text: 'No insider trades in the last 90 days' })
+  const pos = rows.filter(r => r.dir > 0).length, neg = rows.filter(r => r.dir < 0).length
+  const summary = rows.some(r => r.gate) ? { tone: 'warn', text: 'Verify the price first — the data sources disagree' }
+    : pos >= 2 && neg === 0 ? { tone: 'pos', text: `Signals agree: positive (${pos} checks point the same way)` }
+    : neg >= 2 && pos === 0 ? { tone: 'neg', text: `Signals agree: negative (${neg} checks point the same way)` }
+    : pos && neg ? { tone: 'warn', text: 'Signals conflict — be cautious' }
+    : { tone: 'na', text: 'No clear picture — not enough confirmed signals' }
+  return { rows, summary }
+}
+const DC_TONE = { ok: ['✓', '#00ff88'], pos: ['▲', '#00ff88'], neg: ['▼', '#ff4466'], warn: ['⚠', '#ffb800'], info: ['•', '#94a3b8'], na: ['·', '#475569'] }
+function DecisionCheck({ data }) {
+  const [board, setBoard] = useState(null)
+  useEffect(() => {
+    let alive = true
+    rdBoardOnce().then(b => alive && setBoard(b || { signals: [] })).catch(() => alive && setBoard({ error: true }))
+    return () => { alive = false }
+  }, [])
+  const { rows, summary } = decisionRows(data, board)
+  const sc = DC_TONE[summary.tone] || DC_TONE.na
+  return (
+    <div className="panel p-5 font-display" data-testid="decision-check">
+      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+        <span className="text-[15px] text-slate-100">Decision check</span>
+        <span style={{ color: sc[1] }} className="text-[13px]">{summary.text}</span>
+      </div>
+      <div className="space-y-2">
+        {rows.map((r, i) => {
+          const t = DC_TONE[r.tone] || DC_TONE.na
+          return (
+            <div key={i} className="flex gap-3 text-[13px] leading-snug">
+              <span style={{ color: t[1] }} className="w-4 text-center flex-shrink-0">{t[0]}</span>
+              <div className="min-w-0">
+                <span className="text-slate-300">{r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.text}</a> : r.text}</span>
+                {r.sub && <div className="text-[11px] text-slate-600">{r.sub}</div>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-3 text-[11px] text-slate-600">Only confirmed information counts toward agreement. This is a checklist, not advice.</div>
+    </div>
+  )
+}
+
 function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [data,        setData]        = useState(null)
   const [revenueData, setRevenueData] = useState(null)
@@ -1001,6 +1081,8 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
               </div>
             </div>
           </div>
+
+          <DecisionCheck key={data.ticker} data={data} />
 
           {/* MC Score — quantitative model + Claude explanation */}
           <MCScorePanel
