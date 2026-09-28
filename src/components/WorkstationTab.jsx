@@ -863,7 +863,8 @@ export function decisionRows(data, board) {
       : { tone: 'na', dir: 0, text: 'No official company filings in the last 7 days' })
   }
   const since = Date.now() - 90 * 864e5
-  const recent = (data.insiders || []).filter(x => new Date(x.transactionDate || x.filingDate).getTime() >= since)
+  // the Analyze payload stores each trade's date as `date` (Finnhub's transactionDate, renamed)
+  const recent = (data.insiders || []).filter(x => new Date(x.date || x.transactionDate || x.filingDate).getTime() >= since)
   const buys = recent.filter(x => x.transactionCode === 'P' && x.isPlanBuy !== true), sells = recent.filter(x => x.transactionCode === 'S')
   rows.push(buys.length ? { tone: 'pos', dir: 1, text: `Insiders bought shares with their own money (${buys.length} purchase${buys.length === 1 ? '' : 's'} in 90 days)` }
     : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — common, often pre-planned` }
