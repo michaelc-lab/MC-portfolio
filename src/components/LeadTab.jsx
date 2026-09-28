@@ -387,69 +387,86 @@ function SectorPulse({ portfolio, isMobile }) {
 }
 
 // ── Main export ───────────────────────────────────────────────
-// ── News Radar — free, rule-based, speculative. Completely separate from the MC Score ──
-const RD_STRENGTH = { High: '#38bdf8', Medium: '#ffb800', Low: '#64748b' }
-const rdAgo = iso => {
+// ── News Radar — a briefing, not a log. Separate from the MC Score. ──
+const rdAge = iso => {
   if (!iso) return ''
   const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
-  return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'
+  return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd'
 }
-const rdLinkText = s => s.link === 'named' ? 'Named in news' : s.link === 'ai' ? 'AI-inferred' + (s.aiRelation === 'direct' ? ' · company named' : ' · indirect effect') : s.link === 'name' ? (s.via || 'Name match') : 'Theme: ' + (s.via || '')
+const rdAgoLong = iso => { const a = rdAge(iso); return a ? a.replace(/m$/, ' min').replace(/h$/, 'h').replace(/d$/, 'd') + ' ago' : '' }
+const RD_SUFFIX_RE = /\b(inc|corp|corporation|co|company|ltd|limited|plc|holdings?|group|class [a-z]|adr|sa|nv|ag|se)\b\.?/gi
+const rdShortName = (name, ticker, names) => {
+  const n = (names && names[ticker]) || name || ''
+  return n.replace(RD_SUFFIX_RE, '').replace(/[,.]+\s*$/, '').replace(/\s{2,}/g, ' ').trim().split(' ').slice(0, 3).join(' ') || ticker
+}
+const rdClean = (h, ticker) => {
+  let s = String(h || '')
+    .replace(/\((?:NASDAQ|NYSE|NYSE American|AMEX|OTC|Nasdaq)\s*:\s*[A-Z.]+\)/g, '')
+    .replace(new RegExp('\\(' + ticker + '(?:\\.US)?\\)', 'g'), '')
+    .replace(new RegExp('^' + ticker + '\\s+(Stock|Shares)\\s*[:\\-–]?\\s*', 'i'), '')
+    .replace(/\$[A-Z]{1,5}\b/g, '').replace(/\s+-\s+[A-Z][\w .&]+$/, '').replace(/\s{2,}/g, ' ').trim()
+  if (s.length > 92) s = s.slice(0, 89).replace(/\s+\S*$/, '') + '…'
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+const rdLine = (s) => s.summary || rdClean(s.headline, s.ticker)
+const rdDots = strength => { const n = strength === 'High' ? 3 : strength === 'Medium' ? 2 : 1; return [0, 1, 2].map(i => i < n) }
+const rdStatus = s => {
+  if (s.against) return { text: 'Moving against it', tone: 'text-terminal-red' }
+  if (s.late) return { text: s.statedMove >= 10 ? `Already ${s.dir > 0 ? 'up' : 'down'} ${s.statedMove}%` : 'Already moved', tone: 'text-terminal-amber' }
+  if (s.confirmed && s.dp != null) return { text: `${s.dp > 0 ? '+' : ''}${Number(s.dp).toFixed(1)}% today`, tone: s.dp >= 0 ? 'text-terminal-green' : 'text-terminal-red' }
+  return { text: 'Not moving yet', tone: 'text-slate-500' }
+}
+const rdLinkPlain = s => s.link === 'named' ? 'The company is named in the news'
+  : s.link === 'ai' ? (s.aiOnly ? 'Inferred by AI — not yet confirmed by the market or company news' : 'Inferred by AI and confirmed')
+  : s.link === 'name' ? 'Matched by company name' : 'Industry theme: ' + (s.via || '')
 
-function RadarRow({ s, onAnalyze, isMobile }) {
-  const dc = s.dir > 0 ? '#00ff88' : s.dir < 0 ? '#ff4466' : '#64748b'
-  const sc = RD_STRENGTH[s.strength] || '#64748b'
+function RadarDetails({ s, onAnalyze, onClose }) {
   return (
-    <div className="flex items-start gap-3 px-4 py-2.5 border-b border-white/5 last:border-0">
-      <span style={{ color: dc }} className="font-mono text-[13px] w-3 flex-shrink-0 leading-5">{s.dir > 0 ? '▲' : s.dir < 0 ? '▼' : '•'}</span>
-      <button onClick={() => onAnalyze && onAnalyze(s.ticker)}
-        className="font-mono font-bold text-[13px] text-electric-300 hover:text-electric-200 w-14 flex-shrink-0 text-left leading-5">{s.ticker}</button>
-      <div className="flex-1 min-w-0">
-        <a href={s.url || undefined} target="_blank" rel="noopener noreferrer"
-          className={`font-mono text-[11px] text-slate-300 hover:text-white leading-snug block ${isMobile ? '' : 'truncate'}`}>{s.headline}</a>
-        <div className="flex items-center gap-x-2 gap-y-0.5 flex-wrap mt-1 font-mono text-[9px] text-slate-600 uppercase tracking-wider">
-          <span>{s.source}</span>
-          {s.time && <span>· {rdAgo(s.time)}</span>}
-          <span>· {rdLinkText(s)}</span>
-          {s.sources > 1 && <span>· {s.sources} sources</span>}
-          {s.smallCap && <span className="text-terminal-amber">· small cap</span>}
-          {s.inUniverse && <span className="text-electric-400">· in your universe</span>}
-          {s.volRatio != null && s.volRatio >= 2 && (
-            <span className={s.volRatio >= 3 ? 'text-electric-300' : ''}>· {s.volRatio}× normal volume</span>
-          )}
-          {s.role === 'target' && <span className="text-terminal-green">· merger target</span>}
-          {s.role === 'acquirer' && <span>· acquirer</span>}
+    <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-4 font-display">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <a href={s.url || undefined} target="_blank" rel="noopener noreferrer" className="text-[13px] text-slate-200 hover:text-white leading-snug">{s.headline}</a>
+          <div className="text-[11px] text-slate-500 mt-1">{s.source}{s.time ? ' · ' + rdAgoLong(s.time) : ''}{s.sources > 1 ? ` · reported by ${s.sources} sources` : ''}</div>
         </div>
-        {s.aiOnly && (
-          <div className={`font-mono text-[9px] text-terminal-amber/90 mt-0.5 leading-snug ${isMobile ? '' : 'truncate'}`}>
-            ◇ AI reasoning: {s.aiReason || s.evidence} — awaiting confirmation (market or company news)
-          </div>
-        )}
-        {s.evidence && !s.aiOnly && (
-          <div className={`font-mono text-[9px] text-terminal-green/80 mt-0.5 leading-snug ${isMobile ? '' : 'truncate'}`}>
-            ✓ Verified: {s.evidenceUrl
-              ? <a href={s.evidenceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a>
-              : s.evidence}{s.evidenceSource ? ' · ' + s.evidenceSource : ''}
-          </div>
-        )}
+        <button onClick={onClose} aria-label="Close details" className="text-slate-500 hover:text-slate-300 text-[13px] flex-shrink-0">✕</button>
       </div>
-      <div className="flex flex-col items-end gap-1 flex-shrink-0">
-        <span style={{ color: sc, borderColor: sc + '55', background: sc + '14' }}
-          className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 rounded border">{s.strength}</span>
-        {s.against
-          ? <span className="font-mono text-[9px] text-terminal-red text-right leading-tight">⚠ moving against<br />{fmtPct(s.dp)} today</span>
-          : s.confirmed
-            ? <span style={{ color: dc }} className="font-mono text-[10px] font-semibold">{fmtPct(s.dp)} today</span>
-            : s.capped ? <span className="font-mono text-[9px] text-slate-600">unconfirmed</span> : null}
-        {s.late && <span className="font-mono text-[9px] text-terminal-amber text-right leading-tight">late-entry risk:<br />{s.statedMove >= 10 ? `already moved ${s.statedMove}%` : 'already moved'}</span>}
+      <div className="mt-3 space-y-1.5 text-[12px] text-slate-400">
+        <div>{rdLinkPlain(s)}</div>
+        {s.aiOnly
+          ? <div className="text-terminal-amber/90">AI reasoning: {s.aiReason || s.evidence}</div>
+          : s.evidence ? <div className="text-terminal-green/80">Evidence: {s.evidenceUrl ? <a href={s.evidenceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a> : s.evidence}</div> : null}
+        {s.volRatio != null && s.volRatio >= 2 && <div>Trading at {s.volRatio}× its normal volume</div>}
+        {s.role === 'target' && <div>This company is the target of a proposed acquisition</div>}
+        {s.smallCap && <div>Small company — news can move it sharply in both directions</div>}
       </div>
+      <button onClick={() => onAnalyze && onAnalyze(s.ticker)} className="mt-3 text-[12px] text-electric-400 hover:text-electric-300">Open full analysis →</button>
     </div>
   )
 }
 
-function NewsRadar({ onAnalyze, isMobile }) {
+function RadarCard({ s, open, onToggle, onAnalyze, names }) {
+  const bull = s.dir > 0, st = rdStatus(s)
+  return (
+    <button onClick={onToggle} aria-expanded={open}
+      className={`text-left rounded-xl border p-4 transition-colors font-display ${open ? 'border-electric-500/40 bg-electric-500/[0.04]' : 'border-white/10 hover:border-white/20 bg-white/[0.015]'}`}>
+      <div className="flex items-center justify-between">
+        <span onClick={e => { e.stopPropagation(); onAnalyze && onAnalyze(s.ticker) }} className="font-mono text-[18px] text-slate-100 hover:text-electric-300">{s.ticker}</span>
+        <span className={`text-[11px] px-2.5 py-0.5 rounded-md ${bull ? 'bg-terminal-green/10 text-terminal-green' : 'bg-terminal-red/10 text-terminal-red'}`}>{bull ? 'Bullish' : 'Bearish'}</span>
+      </div>
+      <div className="text-[11px] text-slate-500 mt-0.5">{rdShortName(s.name, s.ticker, names)}</div>
+      <div className="text-[13px] text-slate-300 leading-snug mt-3 min-h-[36px]">{rdLine(s)}</div>
+      <div className="flex items-center justify-between mt-4 text-[11px]">
+        <span className="flex gap-1" aria-label={`Confidence ${s.strength}`}>{rdDots(s.strength).map((on, i) => <span key={i} className={`w-1.5 h-1.5 rounded-full ${on ? 'bg-slate-200' : 'bg-slate-700'}`} />)}</span>
+        <span className={st.tone}>{st.text}<span className="text-slate-600"> · {rdAge(s.time)}</span></span>
+      </div>
+    </button>
+  )
+}
+
+function NewsRadar({ onAnalyze, isMobile, names }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
+  const [openKey, setOpenKey] = useState(null)
   const [showAll, setShowAll] = useState(false)
   const [showTrack, setShowTrack] = useState(false)
   const [track, setTrack] = useState(null)
@@ -460,124 +477,113 @@ function NewsRadar({ onAnalyze, isMobile }) {
     fetched.current = true
     jsonp(`${APPS_SCRIPT_URL}?action=getNewsRadar`).then(d => setData(d)).catch(e => setErr(e.message))
   }, [])
-
   const toggleTrack = () => {
     const next = !showTrack
     setShowTrack(next)
     if (next && !track) jsonp(`${APPS_SCRIPT_URL}?action=getNewsRadarTrack`).then(t => setTrack(t)).catch(e => setTrack({ error: e.message }))
   }
 
-  const sigs = (data && data.signals) || []
-  const shown = showAll ? sigs : sigs.slice(0, 6)
   const meta = data && data.meta
+  const sigs = ((data && data.signals) || []).filter(s => s.dir !== 0)
+  const ageH = s => s.time ? (Date.now() - new Date(s.time).getTime()) / 3600000 : 99
+  const score = s => (s.aiOnly ? 0 : 5) + (s.late ? 0 : 10) + (s.points || 0) - Math.min(ageH(s), 72) / 24
+  const top = sigs.filter(s => !s.against && (s.strength === 'High' || s.strength === 'Medium')).sort((a, b) => score(b) - score(a)).slice(0, 3)
+  const rest = sigs.filter(s => top.indexOf(s) < 0).sort((a, b) => score(b) - score(a))
+  const restShown = showAll ? rest : rest.slice(0, 5)
+  const openTop = top.find(s => s.ticker === openKey)
+  const ai = meta && meta.ai
+  const aiOn = ai && ai.used && !ai.error
 
   return (
-    <div className="panel overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <Newspaper size={14} className="text-electric-400" />
-          <span className="font-display font-semibold text-[13px] text-slate-200">News Radar</span>
-          <span style={{ color: '#ffb800', borderColor: '#ffb80055', background: '#ffb80014' }}
-            className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border">Speculative</span>
-          {meta && (() => {
-            const ai = meta.ai
-            const on = ai && ai.used && !ai.error
-            const c = on ? '#38bdf8' : ai && ai.used ? '#ffb800' : '#64748b'
-            const txt = on ? 'AI · ' + String(ai.model || 'Gemini').replace(/^gemini-/i, 'Gemini ').replace(/-/g, ' ') : ai && ai.used ? 'AI paused · rules only' : 'Rules only'
-            return <span title={ai && ai.error ? ai.error : ''} style={{ color: c, borderColor: c + '55', background: c + '14' }}
-              className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border">{txt}</span>
-          })()}
+    <div className="panel p-5 font-display">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-5">
+        <div className="flex items-baseline gap-3 flex-wrap">
+          <span className="text-[16px] text-slate-100">News radar</span>
+          {meta && <span className="text-[12px] text-slate-500">Updated {rdAgoLong(meta.lastRun)} · {meta.headlines} headlines read</span>}
+          {meta && <span title={ai && ai.error ? ai.error : aiOn ? 'AI reading news: ' + ai.model : 'Rules only'} className={`inline-block w-1.5 h-1.5 rounded-full ${aiOn ? 'bg-electric-400' : 'bg-slate-600'}`} />}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600">
-            {meta ? `${meta.headlines} headlines · ${meta.rejected || 0} rejected · scanned ${rdAgo(meta.lastRun)}` : 'Every 30 min · free sources'}
-          </span>
-          <button onClick={toggleTrack}
-            className="font-mono text-[10px] uppercase tracking-wider text-slate-500 hover:text-electric-400 border border-white/10 hover:border-electric-500/30 px-2 py-0.5 rounded transition-all">
-            {showTrack ? 'Hide' : 'Track record'}
-          </button>
-        </div>
+        <button onClick={toggleTrack} className="text-[12px] text-slate-400 hover:text-slate-200 border border-white/10 hover:border-white/20 rounded-md px-3 py-1">{showTrack ? 'Hide track record' : 'Track record'}</button>
       </div>
-      <div className="px-4 pt-2 pb-1 font-mono text-[10px] text-slate-600 leading-relaxed">
-        AI proposes, data decides: every link is checked against real tickers, company news and the market. AI-only inferences are labeled and capped until confirmed. Separate from the MC Score. News spikes often reverse fast.
-      </div>
-
-      {meta && meta.sectors && meta.sectors.length > 0 && (
-        <div className="px-4 py-2.5 border-b border-white/5 space-y-2.5">
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600">
-            Sector watch · news about the whole industry — individual stocks not yet verified
-          </div>
-          {meta.sectors.map(x => (
-            <div key={x.theme + x.dir} className="flex items-start gap-3">
-              <span style={{ color: x.dir > 0 ? '#00ff88' : '#ff4466' }} className="font-mono text-[13px] w-3 flex-shrink-0 leading-5">{x.dir > 0 ? '▲' : '▼'}</span>
-              <div className="flex-1 min-w-0">
-                <div className="font-mono text-[11px] text-slate-200">
-                  <span className="font-semibold">{x.theme}</span>
-                  <span className="text-slate-600"> · {x.sources} sources · </span>
-                  {x.moving ? <span className="text-terminal-green/80">{x.moving} of {x.tickers.length} moving with the news</span>
-                    : x.against ? <span className="text-terminal-red/90">⚠ {x.against} of {x.tickers.length} moving against the news</span>
-                    : <span className="text-slate-600">not moving yet</span>}
-                </div>
-                <a href={x.url || undefined} target="_blank" rel="noopener noreferrer"
-                  className={`font-mono text-[10px] text-slate-400 hover:text-white block leading-snug ${isMobile ? '' : 'truncate'}`}>{x.headline}{x.source ? ' · ' + x.source : ''}</a>
-                <div className="flex flex-wrap gap-1.5 mt-1">
-                  {x.tickers.map(t => (
-                    <button key={t.ticker} onClick={() => onAnalyze && onAnalyze(t.ticker)}
-                      className="font-mono text-[10px] text-electric-300 border border-white/10 hover:border-electric-500/40 rounded px-1.5 py-0.5 transition-all">
-                      {t.ticker}{t.dp != null && Math.abs(t.dp) >= 0.1 ? ' ' + fmtPct(t.dp, 1) : ''}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       {showTrack && (
-        <div className="px-4 py-3 border-b border-white/5">
-          {!track && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking what flagged stocks did next…</div>}
-          {track && track.error && <div className="font-mono text-[11px] text-terminal-red">{track.error}</div>}
-          {track && !track.error && track.matured === 0 && (
-            <div className="font-mono text-[11px] text-slate-500">Collecting: {track.total} flag{track.total === 1 ? '' : 's'} logged. Results appear once flags are 1+ day old.</div>
-          )}
+        <div className="mb-5 rounded-lg border border-white/10 p-4">
+          {!track && <div className="text-[12px] text-slate-500 animate-pulse">Checking what flagged stocks did next…</div>}
+          {track && track.error && <div className="text-[12px] text-terminal-red">{track.error}</div>}
+          {track && !track.error && track.matured === 0 && <div className="text-[12px] text-slate-500">Collecting results — {track.total} signal{track.total === 1 ? '' : 's'} logged so far. Results appear once signals are a day old.</div>}
           {track && !track.error && track.matured > 0 && (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr>{['Strength', 'Flags', 'Moved as predicted', 'Avg move'].map((h, i) => (
-                  <th key={h} style={{ textAlign: i ? 'right' : 'left', padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#475569' }}>{h}</th>
-                ))}</tr></thead>
-                <tbody>{track.buckets.concat(track.sectors && track.sectors.n ? [{ strength: 'Sector watch', n: track.sectors.n, hitRate: track.sectors.hitRate, avgMove: track.sectors.avgMove }] : [],
-                  track.ai && track.ai.n ? [{ strength: 'AI-inferred', n: track.ai.n, hitRate: track.ai.hitRate, avgMove: track.ai.avgMove }] : []).map(b => (
-                  <tr key={b.strength}>
-                    <td style={{ padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: RD_STRENGTH[b.strength] || '#cbd5e1' }}>{b.strength}</td>
-                    <td style={{ padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
-                    <td style={{ padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#cbd5e1', textAlign: 'right' }}>{b.hitRate == null ? '—' : b.hitRate.toFixed(0) + '%'}</td>
-                    <td style={{ padding: '4px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, textAlign: 'right', color: b.avgMove == null ? '#475569' : b.avgMove >= 0 ? '#00ff88' : '#ff4466' }}>{b.avgMove == null ? '—' : fmtPct(b.avgMove)}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-              <div className="font-mono text-[9px] text-slate-600 mt-1">Move since flagged, in the predicted direction (flags 1–10 days old).</div>
+            <div className="space-y-1.5 text-[12px]">
+              {track.buckets.concat(track.sectors && track.sectors.n ? [{ strength: 'Sector pulse', ...track.sectors }] : [], track.ai && track.ai.n ? [{ strength: 'AI-inferred', ...track.ai }] : []).filter(b => b.n).map(b => (
+                <div key={b.strength} className="flex justify-between text-slate-400">
+                  <span>{b.strength === 'High' ? 'Strong signals' : b.strength === 'Medium' ? 'Moderate signals' : b.strength === 'Low' ? 'Weak signals' : b.strength}</span>
+                  <span><span className="text-slate-200">{b.hitRate == null ? '—' : b.hitRate.toFixed(0) + '%'}</span> moved as expected <span className="text-slate-600">· {b.n} signals · avg {b.avgMove == null ? '—' : (b.avgMove >= 0 ? '+' : '') + b.avgMove.toFixed(1) + '%'}</span></span>
+                </div>
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {!data && !err && <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider animate-pulse">Loading news signals…</div>}
-      {err && <div className="p-6 text-center font-mono text-[11px] text-terminal-red">{err}</div>}
-      {data && !meta && (
-        <div className="p-6 text-center font-mono text-[11px] text-slate-500">Not started yet — run <span className="text-slate-300">installNewsRadarTrigger</span> once in Apps Script.</div>
+      {!data && !err && <div className="py-8 text-center text-[12px] text-slate-500 animate-pulse">Reading the news…</div>}
+      {err && <div className="py-8 text-center text-[12px] text-terminal-red">{err}</div>}
+      {data && !meta && <div className="py-8 text-center text-[12px] text-slate-500">Not started yet — run installNewsRadarTrigger once in Apps Script.</div>}
+      {data && meta && !sigs.length && <div className="py-8 text-center text-[13px] text-slate-500">A quiet news day — nothing worth your attention right now.</div>}
+
+      {top.length > 0 && (
+        <>
+          <div className="text-[12px] text-slate-500 mb-2">Top signals</div>
+          <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
+            {top.map(s => <RadarCard key={s.ticker} s={s} names={names} open={openKey === s.ticker} onAnalyze={onAnalyze} onToggle={() => setOpenKey(openKey === s.ticker ? null : s.ticker)} />)}
+          </div>
+          {openTop && <RadarDetails s={openTop} onAnalyze={onAnalyze} onClose={() => setOpenKey(null)} />}
+        </>
       )}
-      {data && meta && !sigs.length && (
-        <div className="p-6 text-center font-mono text-[11px] text-slate-500">No verified stock-level signals right now. Scanning every 30 minutes.</div>
+
+      {meta && meta.sectors && meta.sectors.length > 0 && (
+        <div className="mt-6">
+          <div className="text-[12px] text-slate-500 mb-2">Sector pulse</div>
+          <div className="flex flex-wrap gap-2">
+            {meta.sectors.map(x => {
+              const mixed = x.against && !x.moving
+              const status = x.moving ? 'stocks following' : x.against ? (x.dir > 0 ? 'rally fading' : 'stocks shrugging it off') : 'not in prices yet'
+              return (
+                <span key={x.theme + x.dir} title={x.headline + (x.source ? ' — ' + x.source : '') + '\nWatch: ' + x.tickers.map(t => t.ticker).join(', ')}
+                  className="text-[13px] px-3 py-1.5 rounded-md border border-white/10 text-slate-200">
+                  <span className={mixed ? 'text-slate-500' : x.dir > 0 ? 'text-terminal-green' : 'text-terminal-red'}>{mixed ? '◆' : x.dir > 0 ? '▲' : '▼'}</span>{' '}
+                  {x.theme.split(' / ')[0]}<span className="text-slate-500"> · {status}</span>
+                </span>
+              )
+            })}
+          </div>
+        </div>
       )}
-      {shown.map(s => <RadarRow key={s.ticker} s={s} onAnalyze={onAnalyze} isMobile={isMobile} />)}
-      {sigs.length > 6 && (
-        <button onClick={() => setShowAll(v => !v)}
-          className="w-full py-2 font-mono text-[10px] uppercase tracking-wider text-slate-500 hover:text-electric-400 border-t border-white/5">
-          {showAll ? 'Show less' : `Show all ${sigs.length}`}
-        </button>
+
+      {rest.length > 0 && (
+        <div className="mt-6">
+          <div className="text-[12px] text-slate-500 mb-1">Also on the radar</div>
+          <div className="border-t border-white/5">
+            {restShown.map(s => {
+              const open = openKey === s.ticker, st = rdStatus(s)
+              return (
+                <div key={s.ticker} className="border-b border-white/5">
+                  <button onClick={() => setOpenKey(open ? null : s.ticker)} aria-expanded={open} className="w-full flex items-center gap-3 py-2.5 text-left hover:bg-white/[0.02]">
+                    <span className={`w-3 text-[12px] ${s.dir > 0 ? 'text-terminal-green' : 'text-terminal-red'}`}>{s.dir > 0 ? '▲' : '▼'}</span>
+                    <span className="font-mono text-[13px] text-slate-200 w-14 flex-shrink-0">{s.ticker}</span>
+                    <span className={`text-[13px] text-slate-400 flex-1 min-w-0 ${isMobile ? '' : 'truncate'}`}>{rdLine(s)}</span>
+                    {(s.against || s.late) && !isMobile && <span className={`text-[11px] ${st.tone} flex-shrink-0`}>{st.text}</span>}
+                    <span className="text-[11px] text-slate-600 w-8 text-right flex-shrink-0">{rdAge(s.time)}</span>
+                  </button>
+                  {open && <div className="pb-3"><RadarDetails s={s} onAnalyze={onAnalyze} onClose={() => setOpenKey(null)} /></div>}
+                </div>
+              )
+            })}
+          </div>
+          {rest.length > 5 && (
+            <button onClick={() => setShowAll(v => !v)} className="mt-2 text-[12px] text-slate-500 hover:text-slate-300">{showAll ? 'Show less' : `Show ${rest.length - 5} more`}</button>
+          )}
+        </div>
       )}
+
+      {meta && sigs.length > 0 && <div className="mt-5 text-[11px] text-slate-600">Speculative — news-driven moves often reverse. Tap any signal for its evidence.</div>}
     </div>
   )
 }
@@ -680,7 +686,7 @@ export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
 
 
       {/* News Radar */}
-      <NewsRadar onAnalyze={onAnalyze} isMobile={isMobile} />
+      <NewsRadar onAnalyze={onAnalyze} isMobile={isMobile} names={Object.fromEntries((portfolio || []).map(r => [r.ticker, r.company]))} />
 
       {/* MC Score Leaders */}
       <ScoreLeaders onAnalyze={onAnalyze} isMobile={isMobile} />
