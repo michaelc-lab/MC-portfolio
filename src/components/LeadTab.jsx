@@ -420,6 +420,33 @@ const rdLinkPlain = s => s.link === 'named' ? 'The company is named in the news'
   : s.link === 'ai' ? (s.aiOnly ? 'Inferred by AI — not yet confirmed by the market or company news' : 'Inferred by AI and confirmed')
   : s.link === 'name' ? 'Matched by company name' : 'Industry theme: ' + (s.via || '')
 
+const RD_VOTE_KEY = 'mc_radar_votes'
+const rdVotes = () => { try { return JSON.parse(localStorage.getItem(RD_VOTE_KEY) || '{}') } catch (e) { return {} } }
+function RadarRating({ s }) {
+  const key = s.ticker + '|' + (s.time || '')
+  const [vote, setVote] = useState(() => rdVotes()[key] || null)
+  const [err, setErr] = useState(null)
+  const send = v => {
+    const next = vote === v ? null : v
+    setVote(next); setErr(null)
+    try { const all = rdVotes(); if (next) all[key] = next; else delete all[key]; localStorage.setItem(RD_VOTE_KEY, JSON.stringify(all)) } catch (e) {}
+    jsonp(`${APPS_SCRIPT_URL}?action=rateRadar&ticker=${encodeURIComponent(s.ticker)}&time=${encodeURIComponent(s.time || '')}&vote=${next || 'clear'}`)
+      .then(r => { if (r && r.error) setErr(r.error) }).catch(e => setErr('Not saved — ' + e.message))
+  }
+  const btn = (v, label) => (
+    <button key={v} onClick={() => send(v)} aria-pressed={vote === v}
+      className={`text-[12px] px-2.5 py-1 rounded-md border transition-colors ${vote === v ? 'border-electric-400/60 bg-electric-500/15 text-slate-100' : 'border-white/10 text-slate-400 hover:text-slate-200 hover:border-white/20'}`}>{label}</button>
+  )
+  return (
+    <div className="mt-3 flex items-center gap-2 flex-wrap">
+      <span className="text-[11px] text-slate-500">Was this signal right?</span>
+      {btn('right', '👍 Right')}{btn('wrong', '👎 Wrong')}{btn('irrelevant', 'Not relevant')}
+      {vote && !err && <span className="text-[11px] text-slate-600">Saved — it counts toward the Radar's accuracy</span>}
+      {err && <span className="text-[11px] text-terminal-red">{err}</span>}
+    </div>
+  )
+}
+
 function RadarDetails({ s, onAnalyze, onClose }) {
   return (
     <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-4 font-display">
@@ -439,6 +466,7 @@ function RadarDetails({ s, onAnalyze, onClose }) {
         {s.role === 'target' && <div>This company is the target of a proposed acquisition</div>}
         {s.smallCap && <div>Small company — news can move it sharply in both directions</div>}
       </div>
+      <RadarRating s={s} />
       <button onClick={() => onAnalyze && onAnalyze(s.ticker)} className="mt-3 text-[12px] text-electric-400 hover:text-electric-300">Open full analysis →</button>
     </div>
   )
@@ -514,11 +542,27 @@ function NewsRadar({ onAnalyze, isMobile, names }) {
           {track && !track.error && !track.computing && track.matured > 0 && (
             <div className="space-y-1.5 text-[12px]">
               {track.buckets.concat(track.sectors && track.sectors.n ? [{ strength: 'Sector pulse', ...track.sectors }] : [], track.ai && track.ai.n ? [{ strength: 'AI-inferred', ...track.ai }] : []).filter(b => b.n).map(b => (
-                <div key={b.strength} className="flex justify-between text-slate-400">
+                <div key={b.strength} className="flex justify-between gap-3 flex-wrap text-slate-400">
                   <span>{b.strength === 'High' ? 'Strong signals' : b.strength === 'Medium' ? 'Moderate signals' : b.strength === 'Low' ? 'Weak signals' : b.strength}</span>
-                  <span><span className="text-slate-200">{b.hitRate == null ? '—' : b.hitRate.toFixed(0) + '%'}</span> moved as expected <span className="text-slate-600">· {b.n} signals · avg {b.avgMove == null ? '—' : (b.avgMove >= 0 ? '+' : '') + b.avgMove.toFixed(1) + '%'}</span></span>
+                  <span><span className="text-slate-200">{b.hitRate == null ? '—' : b.hitRate.toFixed(0) + '%'}</span> moved as expected
+                    {b.beatMarketRate != null && <> · <span className="text-slate-200">{b.beatMarketRate.toFixed(0)}%</span> beat the market</>}
+                    <span className="text-slate-600"> · {b.n} signals · avg {b.avgMove == null ? '—' : (b.avgMove >= 0 ? '+' : '') + b.avgMove.toFixed(1) + '%'}</span></span>
                 </div>
               ))}
+              {track.baseline && track.baseline.n > 0 && (
+                <div className="pt-2 text-[11px] text-slate-500 leading-relaxed">
+                  For comparison: the S&amp;P 500 itself moved the predicted way {track.baseline.marketSameWay.toFixed(0)}% of the time, and a coin flip is right 50%.
+                  {' '}A signal only adds value if it clearly beats both.
+                </div>
+              )}
+            </div>
+          )}
+          {track && !track.error && track.feedback && track.feedback.all.n > 0 && (
+            <div className="mt-3 pt-3 border-t border-white/5 text-[12px] text-slate-400">
+              Your ratings: <span className="text-slate-200">{track.feedback.all.n}</span> rated
+              {track.feedback.all.accuracy != null && <> · <span className="text-slate-200">{track.feedback.all.accuracy.toFixed(0)}%</span> right</>}
+              {track.feedback.named.accuracy != null && <span className="text-slate-600"> · named in news {track.feedback.named.accuracy.toFixed(0)}%</span>}
+              {track.feedback.ai.accuracy != null && <span className="text-slate-600"> · AI-inferred {track.feedback.ai.accuracy.toFixed(0)}%</span>}
             </div>
           )}
         </div>
