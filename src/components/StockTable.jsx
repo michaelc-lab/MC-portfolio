@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { Search, ChevronUp, ChevronDown, ChevronsUpDown, X } from 'lucide-react'
-import { fmtPrice, fmtPct, pctClass, statusBadgeClass, sortRows, filterRows } from '../lib/utils'
+import { fmtMoney, fmtPrice, fmtPct, pctClass, statusBadgeClass, sortRows, filterRows } from '../lib/utils'
 
 const COLS_PORTFOLIO = [
   { key: 'ticker',       label: 'Ticker'  },
@@ -63,8 +63,9 @@ function renderCell(r, key) {
     case 'company': return <td><span className="text-slate-300 text-[12px]">{r.company}</span></td>
     case 'sector':  return <td><span className="font-mono text-[10px] uppercase tracking-wider text-slate-500 bg-white/5 px-2 py-0.5 rounded">{r.sector}</span></td>
     case 'thesis':  return <td className="max-w-[200px]"><span className="text-slate-500 text-[11px] italic truncate block">{r.thesis || '—'}</span></td>
-    case 'price':   return <td className="text-right">{r.price == null ? <span className="dim text-[11px]">…</span> : <span className="font-mono font-semibold text-slate-200">{fmtPrice(r.price)}</span>}</td>
-    case 'ath':     return <td className="text-right"><span className="font-mono text-slate-500 text-[12px]">{r.ath ? fmtPrice(r.ath) : '—'}</span></td>
+    case 'price':   return <td className="text-right">{r.price == null ? <span className="dim text-[11px]">…</span> : <span className="font-mono font-semibold text-slate-200">{fmtMoney(r.price, r.currency)}</span>}
+      {r.pxCheck && r.pxCheck.status === 'warn' && <span title={`Price sources disagree: Google Finance ${fmtPrice(r.price)} vs Finnhub ${fmtPrice(r.pxCheck.fh)} (${r.pxCheck.diff > 0 ? '+' : ''}${r.pxCheck.diff}%) — check your broker before trading`} className="ml-1 text-terminal-amber cursor-help">⚠</span>}</td>
+    case 'ath':     return <td className="text-right"><span className="font-mono text-slate-500 text-[12px]">{r.ath ? fmtMoney(r.ath, r.currency) : '—'}</span></td>
     case 'dd':      return <td className="text-right"><DdCell dd={r.dd} /></td>
     case 'dayChangePct':  return <td className="text-right">{pctSpan(r.dayChangePct)}</td>
     case 'weekChangePct': return <td className="text-right">{pctSpan(r.weekChangePct)}</td>
@@ -202,6 +203,14 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze, isMob
           </tbody>
         </table>
       </div>
+      {(() => {
+        const ok = rows.filter(r => r.pxCheck && r.pxCheck.status === 'ok').length, warn = rows.filter(r => r.pxCheck && r.pxCheck.status === 'warn').length
+        return (ok + warn) > 0 && (
+          <div className="font-mono text-[10px] text-slate-600 mt-2 px-1" data-testid="px-footer">
+            Prices from Google Finance (can be up to 20 min delayed) · cross-checked with Finnhub: {ok} agree{warn > 0 && <span className="text-terminal-amber"> · {warn} disagree ⚠</span>}
+          </div>
+        )
+      })()}
     </div>
   )
 }
