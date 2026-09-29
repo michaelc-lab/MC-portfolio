@@ -403,8 +403,8 @@ const MC_SCORE_TIP = `<b>MC Score (0–10)</b> — computed by a fixed-rule mode
   🟢 8–10 very favorable · 6.5–8 favorable odds<br/>
   🟡 4.5–6.5 neutral<br/>
   🔴 3–4.5 unfavorable · 0–3 very unfavorable odds<br/><br/>
-  <b>What history shows on your stocks:</b> higher scores gave steadier results that beat the S&amp;P 500 more often — not bigger winners. Low scores were mostly flat, with rare big jumps.<br/><br/>
-  <i>Benchmarked against sector medians, adjusted for the market regime, and it learns from its own 30-day results.</i>`
+  <b>Evidence so far: not proven.</b> A 5-year test on your stocks was mixed — not statistically reliable, and the stocks were chosen with hindsight. The live track record is the real test.<br/><br/>
+  <i>Compared with approximate sector medians and adjusted for the market regime.</i>`
 
 const RANGE_TIP = `<b>Likely range</b> — how far the score could move if the data were slightly different.<br/>Narrow = factors agree. Wide = the stock is controversial: strong on some factors, weak on others.<br/><br/><i>Two stocks with the same score but different ranges are very different bets.</i>`
 
@@ -571,19 +571,23 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
           </div>
           {trackLoading && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking every past score against what happened next…</div>}
           {track && track.error && <div className="font-mono text-[11px] text-terminal-red">{track.error}</div>}
-          {track && !track.error && track.matured === 0 && (
+          {track && !track.error && !(track.months > 0) && (
             <div className="font-mono text-[11px] text-slate-500 leading-relaxed">
               Collecting data: {track.total} score{track.total === 1 ? '' : 's'} logged{track.firstDate ? ' since ' + track.firstDate : ''}.
               {track.firstResults && <> First 30-day results on <span className="text-slate-300">{track.firstResults}</span>.</>}
               {' '}Your whole universe is scored automatically every day, so evidence builds fast.
             </div>
           )}
-          {track && !track.error && track.matured > 0 && (
+          {track && !track.error && track.months > 0 && (
             <div className="space-y-3">
+              <div className="font-mono text-[11px] text-slate-300" data-testid="track-months">
+                {track.months} month{track.months === 1 ? '' : 's'} of results
+                {track.months < 6 && <span className="text-slate-500"> — too early to judge; about 6 months are needed</span>}
+              </div>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
-                    <tr>{['Rating', 'Outcomes', 'Avg 30d', 'vs S&P 500', 'Beat S&P'].map((h, i) => (
+                    <tr>{['Rating', 'Stocks', 'Avg 30d', 'vs S&P 500', 'Beat S&P'].map((h, i) => (
                       <th key={h} style={{ ...th, textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
                     ))}</tr>
                   </thead>
@@ -594,7 +598,7 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
                         <td style={{ ...td, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
                         <td style={{ ...td, textAlign: 'right', color: pctColor(b.avgReturn) }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
                         <td style={{ ...td, fontWeight: 700, textAlign: 'right', color: pctColor(b.avgVsSpy) }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
-                        <td style={{ ...td, color: '#94a3b8', textAlign: 'right' }}>{b.beatSpyRate == null ? '—' : b.beatSpyRate.toFixed(0) + '%'}</td>
+                        <td style={{ ...td, color: '#94a3b8', textAlign: 'right' }}>{b.periods ? `${b.beatPeriods} of ${b.periods} mo` : '—'}</td>
                       </tr>
                     ) })}
                   </tbody>
@@ -631,8 +635,8 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
                 </div>
               )}
               <div className="font-mono text-[10px] text-slate-600 leading-relaxed">
-                {track.matured} outcomes. A working model shows Very favorable &gt; Favorable &gt; Neutral &gt; Unfavorable in "vs S&amp;P 500" — and Very favorable clearly above the "All stocks" baseline.
-                {' '}{track.learning && track.learning.active ? `Weights self-tuned from ${track.learning.periods} independent periods.` : 'Weights stay at the research base until ~3 months of significant evidence.'}
+                Each month counts once (stocks in the same month share the same market move). A working model shows Very favorable &gt; Favorable &gt; Neutral &gt; Unfavorable in "vs S&amp;P 500", month after month.
+                {' '}{track.learning && track.learning.active ? `Some weights adjusted from ${track.learning.periods} months of results.` : 'Weights stay at the research base until a factor\'s edge is statistically clear.'}
               </div>
             </div>
           )}
@@ -777,7 +781,7 @@ export function decisionRows(data, board, now = new Date()) {
     const s = mc.score, d = s >= 6.5 ? 1 : s <= 4 ? -1 : 0
     rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d,
       text: `${d > 0 ? 'Favorable odds' : d < 0 ? 'Unfavorable odds' : 'Neutral odds'} — MC Score ${s.toFixed(1)}${mc.universe && mc.universe.rank ? ` (#${mc.universe.rank} of ${mc.universe.n})` : ''}`,
-      sub: d > 0 ? 'Historically: steadier results, not bigger winners' : d < 0 ? 'Historically: mostly flat, with rare big jumps' : null })
+      sub: d !== 0 ? 'Not proven yet on your stocks' : null })
   }
   const rdAge = board && !board.error && board.meta ? hoursAgo(board.meta.lastRun, now) : null
   if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
