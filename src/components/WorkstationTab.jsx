@@ -431,16 +431,7 @@ const FACTOR_TIPS = {
 }
 
 const mcColor = s => s == null ? '#475569' : s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
-const REGIME_STYLE = {
-  'risk-off': { c: '#ff4466', t: 'Risk-off' },
-  'neutral':  { c: '#ffb800', t: 'Neutral market' },
-  'risk-on':  { c: '#00ff88', t: 'Risk-on' },
-}
-const AGREE_COLOR = { 'Strong agreement': '#00ff88', 'Mixed signals': '#ffb800', 'Conflicted': '#ff4466' }
 const FACTOR_NAMES = { momentum: 'Momentum', value: 'Value', quality: 'Quality', growth: 'Growth', earnings: 'Earnings', smart: 'Smart Money', risk: 'Risk' }
-const Chip = ({ color, children }) => (
-  <span style={{ color, borderColor: color + '55', background: color + '14' }} className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border whitespace-nowrap">{children}</span>
-)
 const th = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#475569', borderBottom: '1px solid rgba(14,165,233,0.08)', whiteSpace: 'nowrap' }
 const td = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, whiteSpace: 'nowrap' }
 const pctColor = v => v == null ? '#475569' : v >= 0 ? '#00ff88' : '#ff4466'
@@ -465,8 +456,6 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
   }
 
   const col = mcColor(mc.score)
-  const confCol = mc.confidence === 'High' ? '#00ff88' : mc.confidence === 'Medium' ? '#ffb800' : '#ff4466'
-  const reg = REGIME_STYLE[(mc.regime && mc.regime.name) || 'neutral'] || REGIME_STYLE.neutral
   const range = mc.range || { low: mc.score, high: mc.score }
   const learning = mc.learning || {}
 
@@ -480,121 +469,96 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
     finally { setTrackLoading(false) }
   }
 
+  const regName = (mc.regime && mc.regime.name) || 'neutral'
+  const regText = regName === 'risk-on' ? 'risk-on market' : regName === 'risk-off' ? 'risk-off market' : 'neutral market'
+  const agreeText = !mc.agreement ? null : /strong/i.test(mc.agreement) ? 'Signals agree' : /mixed/i.test(mc.agreement) ? 'Signals are mixed' : /conflict/i.test(mc.agreement) ? 'Signals conflict' : mc.agreement
+  const factors = [...mc.factors].sort((a, b) => (b.score == null ? -1 : b.score) - (a.score == null ? -1 : a.score))
+  const greens = mc.flags.green.slice(0, 3), reds = mc.flags.red.slice(0, 2)
+
   return (
-    <div className="panel p-5">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Sparkles size={14} className="text-electric-400" />
-          <InfoTip text={MC_SCORE_TIP}><span className="font-display font-semibold text-[13px] text-slate-200">MC Score</span></InfoTip>
-          <span className="font-mono text-[9px] text-slate-600 uppercase tracking-wider">v{mc.version} · 7 factors · 30+ signals</span>
-          <Chip color={confCol}>{mc.confidence} confidence · {mc.coverage}% data</Chip>
-          <InfoTip text={REGIME_TIP + (mc.regime && mc.regime.note ? `<br/><br/><b>Now:</b> ${mc.regime.note}${mc.regime.vix != null ? ` (VIX ${Number(mc.regime.vix).toFixed(1)})` : ''}` : '')}>
-            <Chip color={reg.c}>{reg.t}</Chip>
-          </InfoTip>
-          <InfoTip text={LEARN_TIP}>
-            <Chip color={learning.active ? '#38bdf8' : '#64748b'}>{learning.active ? `Self-tuned · ${learning.periods} mo` : 'Self-learning · collecting'}</Chip>
-          </InfoTip>
+    <div className="panel p-5 font-display" data-testid="mc-panel">
+      {/* Header: one plain line instead of chips */}
+      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-5">
+        <div className="flex items-baseline gap-3 flex-wrap">
+          <InfoTip text={MC_SCORE_TIP}><span className="text-[16px] text-slate-100">MC Score</span></InfoTip>
+          <span className="text-[12px] text-slate-500">
+            {mc.confidence} confidence{mc.coverage < 90 ? ` · ${mc.coverage}% data` : ''}
+            {' · '}<InfoTip text={REGIME_TIP + (mc.regime && mc.regime.note ? `<br/><br/><b>Now:</b> ${mc.regime.note}${mc.regime.vix != null ? ` (VIX ${Number(mc.regime.vix).toFixed(1)})` : ''}` : '')}><span>{regText}</span></InfoTip>
+            {learning.active && <> · <InfoTip text={LEARN_TIP}><span>self-tuned ({learning.periods} mo)</span></InfoTip></>}
+          </span>
         </div>
-        <button onClick={toggleTrack}
-          className="font-mono text-[10px] uppercase tracking-wider text-slate-500 hover:text-electric-400 border border-white/10 hover:border-electric-500/30 px-2.5 py-1 rounded transition-all">
-          {showTrack ? 'Hide' : 'Track record'}
+        <button onClick={toggleTrack} className="text-[12px] text-slate-400 hover:text-slate-200 border border-white/10 hover:border-white/20 rounded-md px-3 py-1">
+          {showTrack ? 'Hide track record' : 'Track record'}
         </button>
       </div>
 
-      <div className={`grid gap-5 ${isMobile ? 'grid-cols-1' : 'grid-cols-12'}`}>
-        {/* Headline score */}
+      <div className={`grid gap-7 ${isMobile ? 'grid-cols-1' : 'grid-cols-12'}`}>
+        {/* The score */}
         <div className={isMobile ? '' : 'col-span-3'}>
-          <div className="flex items-end gap-2">
-            <span style={{ color: col, fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 56, lineHeight: 1 }}>{mc.score.toFixed(1)}</span>
-            <span className="font-mono text-[13px] text-slate-600 mb-2">/10</span>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-slate-100" style={{ fontSize: 48, fontWeight: 500, lineHeight: 1 }}>{mc.score.toFixed(1)}</span>
+            <span className="text-[14px] text-slate-500">/10</span>
           </div>
-          <div style={{ color: col }} className="font-display font-bold text-[18px] mt-1">{oddsLabel(mc.label)} odds</div>
-          {mc.incomplete && <div className="font-mono text-[10px] text-terminal-amber mt-1 leading-snug">⚠ {mc.incomplete}</div>}
-          <div className="relative h-2 rounded mt-3" style={{ background: 'linear-gradient(90deg,#ff4466 0%,#ff4466 30%,#ffb800 45%,#ffb800 65%,#00ff88 80%,#00ff88 100%)', opacity: 0.85 }}>
-            <div className="absolute -top-1 h-4 rounded-sm"
-              style={{ left: range.low * 10 + '%', width: Math.max(0.5, (range.high - range.low) * 10) + '%', background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)' }} />
-            <div style={{ left: `calc(${mc.score * 10}% - 6px)`, borderColor: col }} className="absolute -top-1 w-3 h-4 rounded-sm bg-navy-950 border-2" />
+          <div style={{ color: col }} className="text-[16px] mt-1.5">{oddsLabel(mc.label)} odds</div>
+          {mc.incomplete && <div className="text-[11px] text-terminal-amber mt-1.5 leading-snug">⚠ {mc.incomplete}</div>}
+          <div className="relative h-1 rounded mt-4" style={{ background: 'linear-gradient(90deg,#ff4466 0%,#ff4466 30%,#ffb800 45%,#ffb800 65%,#00ff88 80%,#00ff88 100%)', opacity: 0.8 }}>
+            <div className="absolute -top-1 h-3 rounded-sm" style={{ left: range.low * 10 + '%', width: Math.max(0.8, (range.high - range.low) * 10) + '%', border: '1px solid rgba(255,255,255,0.55)' }} />
           </div>
-          <div className="flex justify-between font-mono text-[8px] text-slate-600 mt-1 uppercase tracking-wider">
-            <span>Unfavorable</span><span>Neutral</span><span>Favorable</span>
-          </div>
-          <div className="mt-3 space-y-1.5">
-            <div className="font-mono text-[10px] text-slate-400">
-              <InfoTip text={RANGE_TIP}><span>Likely range {range.low.toFixed(1)}–{range.high.toFixed(1)}</span></InfoTip>
-            </div>
-            {mc.agreement && (
-              <InfoTip text={AGREE_TIP}><Chip color={AGREE_COLOR[mc.agreement] || '#64748b'}>{mc.agreement}</Chip></InfoTip>
-            )}
-            {mc.universe && (
-              <div className="font-mono text-[10px] text-slate-400">
-                <span className="text-electric-300 font-semibold">#{mc.universe.rank}</span> of {mc.universe.n} in your universe
-                {mc.universe.beats != null && <span className="text-slate-600"> · beats {mc.universe.beats}%</span>}
-              </div>
-            )}
-            {mc.sector && <div className="font-mono text-[10px] text-slate-600">Benchmarked vs {mc.sector} peers</div>}
+          <div className="text-[12px] text-slate-500 mt-3 leading-relaxed">
+            <div><InfoTip text={RANGE_TIP}><span>Likely {range.low.toFixed(1)}–{range.high.toFixed(1)}</span></InfoTip></div>
+            {mc.universe && <div>#{mc.universe.rank} of {mc.universe.n} in your stocks</div>}
+            {agreeText && <div><InfoTip text={AGREE_TIP}><span>{agreeText}</span></InfoTip></div>}
+            {mc.sector && <div className="text-slate-600">Compared with {mc.sector} peers</div>}
           </div>
           {mc.caps && mc.caps.length > 0 && (
             <div className="mt-3 space-y-1">
-              {mc.caps.map((c, i) => <div key={i} className="font-mono text-[10px] text-terminal-amber leading-snug">⚠ {c}</div>)}
+              {mc.caps.map((cp, i) => <div key={i} className="text-[11px] text-terminal-amber leading-snug">⚠ {cp}</div>)}
             </div>
           )}
         </div>
 
-        {/* Factor breakdown */}
+        {/* Factors — strongest first, details on tap */}
         <div className={isMobile ? '' : 'col-span-5'}>
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Factor breakdown · tap for detail</div>
-          <div className="space-y-1">
-            {mc.factors.map(f => {
+          <div className="text-[12px] text-slate-500 mb-2">Factors</div>
+          <div className="space-y-0.5">
+            {factors.map(f => {
               const base = f.baseWeight != null ? f.baseWeight : f.weight
-              const delta = f.weight - base
+              const adjusted = Math.abs(f.weight - base) >= 0.005
+              const open = openKey === f.key
               return (
                 <div key={f.key}>
-                  <button onClick={() => setOpenKey(openKey === f.key ? null : f.key)}
-                    className="w-full flex items-center gap-2 py-1 text-left">
-                    <span className="font-mono text-[11px] text-slate-300 w-[140px] flex-shrink-0 truncate">
-                      <InfoTip text={FACTOR_TIPS[f.key]}>{f.name}</InfoTip>
-                    </span>
-                    <span className="font-mono text-[9px] text-slate-600 w-10 flex-shrink-0"
-                      title={Math.abs(delta) >= 0.005 ? `Adjusted from ${Math.round(base * 100)}% (market regime / learned results)` : 'Research base weight'}>
-                      {Math.round(f.weight * 100)}%{Math.abs(delta) >= 0.005 && <span style={{ color: delta > 0 ? '#00ff88' : '#ff4466' }}>{delta > 0 ? '↑' : '↓'}</span>}
-                    </span>
-                    <div className="flex-1 h-1.5 bg-navy-800 rounded overflow-hidden">
+                  <button onClick={() => setOpenKey(open ? null : f.key)} aria-expanded={open} className="w-full flex items-center gap-3 py-1.5 text-left">
+                    <span className="text-[13px] text-slate-300 w-[150px] flex-shrink-0 truncate"><InfoTip text={FACTOR_TIPS[f.key]}><span>{f.name}</span></InfoTip></span>
+                    <div className="flex-1 h-1 bg-white/5 rounded overflow-hidden">
                       <div style={{ width: f.score == null ? 0 : f.score * 10 + '%', background: mcColor(f.score) }} className="h-full rounded" />
                     </div>
-                    <span style={{ color: mcColor(f.score) }} className="font-mono text-[11px] font-semibold w-8 text-right flex-shrink-0">
-                      {f.score == null ? '—' : f.score.toFixed(1)}
-                    </span>
+                    <span className="text-[13px] text-slate-200 w-8 text-right flex-shrink-0">{f.score == null ? '—' : f.score.toFixed(1)}</span>
                   </button>
-                  {openKey === f.key && (
-                    <div className="ml-2 mb-2 pl-3 border-l border-electric-500/20 space-y-0.5">
+                  {open && (
+                    <div className="ml-1 mb-2 pl-3 border-l border-white/10 space-y-0.5 font-mono">
                       {f.metrics.map(m => (
-                        <div key={m.label} className="flex justify-between gap-3 font-mono text-[10px]">
+                        <div key={m.label} className="flex justify-between gap-3 text-[11px]">
                           <span className="text-slate-500">{m.label}</span>
                           <span className="text-slate-300 text-right">{m.value}</span>
                         </div>
                       ))}
+                      <div className="text-[10px] text-slate-600 pt-1">Weight {Math.round(f.weight * 100)}%{adjusted ? ` (base ${Math.round(base * 100)}%, adjusted for the market / learned results)` : ''}</div>
                     </div>
                   )}
                 </div>
               )
             })}
           </div>
+          <div className="text-[11px] text-slate-600 mt-2">Tap a factor for its details</div>
         </div>
 
-        {/* Signals */}
+        {/* What drives it — at most 3 positives and 2 negatives */}
         <div className={isMobile ? '' : 'col-span-4'}>
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Key signals · most important first</div>
+          <div className="text-[12px] text-slate-500 mb-2">What drives it</div>
           <div className="space-y-1.5">
-            {mc.flags.green.map((s, i) => (
-              <div key={'g' + i} className="flex gap-2 font-mono text-[11px] text-slate-300 leading-snug"><span className="text-terminal-green flex-shrink-0">▲</span>{s}</div>
-            ))}
-            {mc.flags.red.map((s, i) => (
-              <div key={'r' + i} className="flex gap-2 font-mono text-[11px] text-slate-300 leading-snug"><span className="text-terminal-red flex-shrink-0">▼</span>{s}</div>
-            ))}
-            {!mc.flags.green.length && !mc.flags.red.length && (
-              <div className="font-mono text-[11px] text-slate-600">No strong signals either way.</div>
-            )}
+            {greens.map((sg, i) => <div key={'g' + i} className="flex gap-2 text-[13px] text-slate-300 leading-snug"><span className="text-terminal-green flex-shrink-0">▲</span>{sg}</div>)}
+            {reds.map((sg, i) => <div key={'r' + i} className="flex gap-2 text-[13px] text-slate-300 leading-snug"><span className="text-terminal-red flex-shrink-0">▼</span>{sg}</div>)}
+            {!greens.length && !reds.length && <div className="text-[13px] text-slate-600">No strong signals either way.</div>}
           </div>
         </div>
       </div>
@@ -675,34 +639,27 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
         </div>
       )}
 
-      {/* Claude explanation */}
-      <div className="mt-4 pt-4 border-t border-white/5">
-        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-          <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600">Analyst explanation · Claude</span>
+      {/* Claude explanation + one quiet line */}
+      <div className="mt-5 pt-4 border-t border-white/5">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <span className="text-[11px] text-slate-600">Better odds of a steady result — not a prediction. Not financial advice.</span>
           {!aiSummary && !aiLoading && (
-            <button onClick={onGenerate}
-              className="flex items-center gap-2 px-3 py-1.5 rounded border border-electric-500/30 bg-electric-500/10 text-electric-400 text-[10px] font-mono uppercase tracking-wider hover:border-electric-500/50 hover:bg-electric-500/15 transition-all">
-              <Sparkles size={10} /> Explain this score
+            <button onClick={onGenerate} title="Claude explains what drives the score and checks recent headlines for risks the numbers can't see (~$0.002)"
+              className="flex items-center gap-2 px-3 py-1 rounded-md border border-white/10 hover:border-white/20 text-[12px] text-slate-300 hover:text-white">
+              <Sparkles size={12} className="text-electric-400" /> Explain this score
             </button>
           )}
         </div>
         {aiLoading && (
-          <div className="flex items-center gap-3 py-2">
+          <div className="flex items-center gap-3 pt-3">
             <div className="w-4 h-4 rounded-full border-2 border-electric-500/30 border-t-electric-500 animate-spin flex-shrink-0" />
-            <div className="font-mono text-[12px] text-slate-500 animate-pulse">Claude is reviewing the factors and headlines for {ticker}…</div>
+            <div className="text-[13px] text-slate-500 animate-pulse">Claude is reviewing the factors and headlines for {ticker}…</div>
           </div>
         )}
-        {aiError && <div className="font-mono text-[11px] text-terminal-red py-1">{aiError}</div>}
+        {aiError && <div className="text-[12px] text-terminal-red pt-2">{aiError}</div>}
         {aiSummary && (
-          <div className="font-mono text-[12px] text-slate-300 leading-relaxed whitespace-pre-wrap border-l-2 border-electric-500/30 pl-4">{aiSummary}</div>
+          <div className="text-[13px] text-slate-300 leading-relaxed whitespace-pre-wrap border-l-2 border-electric-500/30 pl-4 mt-3">{aiSummary}</div>
         )}
-        {!aiSummary && !aiLoading && !aiError && (
-          <div className="font-mono text-[11px] text-slate-600">Claude explains what drives the score and checks recent headlines for risks the numbers can't see (~$0.002).</div>
-        )}
-      </div>
-
-      <div className="font-mono text-[9px] text-slate-700 mt-4">
-        Systematic model output, not financial advice. No model predicts the future — use the range, agreement and track record to size positions.
       </div>
     </div>
   )
