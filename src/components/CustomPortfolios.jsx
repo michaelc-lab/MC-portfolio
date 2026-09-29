@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Plus, X, Edit2, Trash2, Check, TrendingUp, DollarSign, BarChart2, Search, ChevronUp, ChevronDown } from 'lucide-react'
-import { fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
+import { APPS_SCRIPT_URL, jsonp } from '../lib/api'
+import { Plus, X, Edit2, Trash2, Check, TrendingUp, DollarSign, BarChart2, Search } from 'lucide-react'
+import { fmtMoney, fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
 
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwUQqqI6PAa64xq5ZALeJSUWuy86pVtSEG6rIMhgNOQ-7XS-t7PJRRncJ1mi7OAwd0/exec'
 const QUOTE_CACHE = {}
 const QUOTE_TTL = 120000
 
@@ -23,18 +23,6 @@ function getSavedId() {
 }
 
 // ── JSONP helper ──────────────────────────────────────────────
-function jsonp(url) {
-  return new Promise((resolve, reject) => {
-    const cbName = '_cb_' + Math.random().toString(36).slice(2)
-    const script = document.createElement('script')
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('Timeout')) }, 20000)
-    function cleanup() { clearTimeout(timeout); delete window[cbName]; if (script.parentNode) script.parentNode.removeChild(script) }
-    window[cbName] = (data) => { cleanup(); resolve(data) }
-    script.onerror = () => { cleanup(); reject(new Error('Failed')) }
-    script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName + '&cb=' + Date.now()
-    document.head.appendChild(script)
-  })
-}
 
 // ── Backend sync ──────────────────────────────────────────────
 async function loadFromSheet(userId) {
@@ -44,15 +32,46 @@ async function loadFromSheet(userId) {
   } catch { return null }
 }
 
-async function saveToSheet(userId, portfolios) {
-  try {
-    const data = encodeURIComponent(JSON.stringify(portfolios))
-    await jsonp(`${APPS_SCRIPT_URL}?action=saveCustomPortfolios&userId=${encodeURIComponent(userId)}&data=${data}`)
-  } catch {}
+// Saves in small pieces: a whole portfolio set is too long for one request address.
+// Throws on failure, so the screen can say so (it used to show "saved" even when nothing reached the Sheet).
+export async function saveToSheet(userId, portfolios, send = jsonp) {
+  const json = JSON.stringify(portfolios), size = 1500, parts = []
+  for (let i = 0; i < json.length; i += size) parts.push(json.slice(i, i + size))
+  if (!parts.length) parts.push('[]')
+  const saveId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+  for (let i = 0; i < parts.length; i++) {
+    let r = null, err = null
+    for (let a = 0; a < 2 && !r; a++) {
+      try { r = await send(`${APPS_SCRIPT_URL}?action=saveCustomPortfoliosChunk&userId=${encodeURIComponent(userId)}&saveId=${saveId}&part=${i}&total=${parts.length}&chunk=${encodeURIComponent(parts[i])}`) }
+      catch (e) { err = e }
+    }
+    if (!r || r.ok === false) throw new Error((r && r.error) || (err && err.message) || 'Save failed')
+    if (i === parts.length - 1 && !r.complete) throw new Error('Save incomplete')
+  }
 }
 
 // ── Quote fetcher ─────────────────────────────────────────────
 const YEAR = new Date().getFullYear()
+
+// All prices in ONE request (was one request per stock — big portfolios hit Google's ~30-at-once limit).
+// force = skip the 2-minute browser cache (used by the 5-minute refresh)
+export async function fetchQuotes(tickers, force = false, send = jsonp) {
+  const now = Date.now(), out = {}, need = []
+  tickers.forEach(t => { const c = QUOTE_CACHE[t]; if (!force && c && now - c.ts < QUOTE_TTL) out[t] = c.data; else need.push(t) })
+  if (!need.length) return out
+  try {
+    const r = await send(`${APPS_SCRIPT_URL}?action=getQuotes&tickers=${encodeURIComponent(need.join(','))}`)
+    const qs = (r && r.quotes) || {}
+    if (!r || !r.quotes) throw new Error('No batch answer')
+    need.forEach(t => { const q = qs[t]; if (q && q.price != null) { QUOTE_CACHE[t] = { ts: now, data: q }; out[t] = q } })
+  } catch (e) {
+    for (let i = 0; i < need.length; i += 4) {                     // fallback: one request per stock, 4 at a time
+      const chunk = need.slice(i, i + 4), res = await Promise.all(chunk.map(t => fetchQuote(t)))
+      chunk.forEach((t, k) => { if (res[k]) out[t] = res[k] })
+    }
+  }
+  return out
+}
 
 async function fetchQuote(ticker) {
   const now = Date.now()
@@ -171,7 +190,7 @@ function AddPositionModal({ onClose, onAdd, initial }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Avg Buy Price ($)</label>
+              <label className="block text-[11px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Avg Buy Price <span className="normal-case text-slate-600">(in the stock's own currency — e.g. AUD for .AX)</span></label>
               <input value={buyPrice} onChange={e => { setBuyPrice(e.target.value); setError('') }}
                 placeholder="180.00" type="number" min="0" step="0.01"
                 className="w-full bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[13px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-electric-500/40" />
@@ -242,12 +261,17 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
     const missing = positions.filter(p => !quotes[p.ticker])
     if (!missing.length) return
     setLoading(new Set(missing.map(p => p.ticker)))
-    missing.forEach(p => {
-      fetchQuote(p.ticker).then(q => {
-        if (q) setQuotes(prev => ({ ...prev, [p.ticker]: q }))
-        setLoading(prev => { const s = new Set(prev); s.delete(p.ticker); return s })
-      })
+    fetchQuotes(missing.map(p => p.ticker)).then(map => {
+      setQuotes(prev => ({ ...prev, ...map }))
+      setLoading(new Set())
     })
+  }, [positions.map(p => p.ticker).join(',')])
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !positions.length) return
+      fetchQuotes(positions.map(p => p.ticker), true).then(map => setQuotes(prev => ({ ...prev, ...map })))
+    }, 5 * 60000)
+    return () => clearInterval(id)
   }, [positions.map(p => p.ticker).join(',')])
 
   const handleAdd = async () => {
@@ -380,12 +404,17 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
     const missing = positions.filter(p => !quotes[p.ticker])
     if (!missing.length) return
     setLoading(new Set(missing.map(p => p.ticker)))
-    missing.forEach(p => {
-      fetchQuote(p.ticker).then(q => {
-        if (q) setQuotes(prev => ({ ...prev, [p.ticker]: q }))
-        setLoading(prev => { const s = new Set(prev); s.delete(p.ticker); return s })
-      })
+    fetchQuotes(missing.map(p => p.ticker)).then(map => {
+      setQuotes(prev => ({ ...prev, ...map }))
+      setLoading(new Set())
     })
+  }, [positions.map(p => p.ticker).join(',')])
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !positions.length) return
+      fetchQuotes(positions.map(p => p.ticker), true).then(map => setQuotes(prev => ({ ...prev, ...map })))
+    }, 5 * 60000)
+    return () => clearInterval(id)
   }, [positions.map(p => p.ticker).join(',')])
 
   const handleSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' })
@@ -394,21 +423,24 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
   const rows = positions.map(p => {
     const q = quotes[p.ticker]
     const currentPrice = q?.price ?? null
-    const cost         = p.buyPrice * p.qty
-    const value        = currentPrice != null ? currentPrice * p.qty : null
-    const pnlAbs       = value != null ? value - cost : null
-    const pnlPct       = pnlAbs != null ? (pnlAbs / cost) * 100 : null
+    // prices are in the stock's own currency; money columns and totals are converted to USD at today's rate
+    const cur          = q?.currency || 'USD'
+    const fx           = cur === 'USD' ? 1 : (q?.fxToUsd ?? null)
+    const cost         = fx != null ? p.buyPrice * p.qty * fx : null
+    const value        = currentPrice != null && fx != null ? currentPrice * p.qty * fx : null
+    const pnlAbs       = value != null && cost != null ? value - cost : null
+    const pnlPct       = pnlAbs != null && cost ? (pnlAbs / cost) * 100 : null
     // YTD start price: your buy price if bought this year, otherwise the last close of the previous year.
     // No Dec 31 price (listed this year, or a data gap) and no 2026 purchase date → no YTD, never a guess.
     const boughtThisYear = !!(p.buyDate && Number(p.buyDate.slice(0, 4)) === YEAR)
     const noYearEnd      = !!(q && q.price != null && q.ytdBase == null)
     const ytdStart       = boughtThisYear ? p.buyPrice : (q?.ytdBase ?? null)
     const ytdFrom        = boughtThisYear ? `your buy price (bought ${p.buyDate})` : q?.ytdBase ? `the Dec 31 close ${fmtPrice(q.ytdBase)}` : null
-    const ytdAbs         = currentPrice != null && ytdStart ? (currentPrice - ytdStart) * p.qty : null
+    const ytdAbs         = currentPrice != null && ytdStart && fx != null ? (currentPrice - ytdStart) * p.qty * fx : null
     const ytdPct         = currentPrice != null && ytdStart ? (currentPrice / ytdStart - 1) * 100 : null
     const assumed        = !p.buyDate && q?.ytdBase != null
     const noStart        = noYearEnd && !boughtThisYear
-    return { ...p, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed, noStart }
+    return { ...p, cur, fx, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed, noStart }
   })
 
   const sorted = [...rows].sort((a, b) => {
@@ -420,17 +452,18 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
   })
 
   // Totals
-  const totals = rows.reduce((acc, r) => {
-    acc.cost  += r.cost  ?? 0
-    acc.value += r.value ?? 0
-    return acc
-  }, { cost: 0, value: 0 })
+  // only positions whose price has loaded count — otherwise a loading row showed as a big fake loss
+  const priced = rows.filter(r => r.cost != null && r.value != null)
+  const totals = priced.reduce((acc, r) => { acc.cost += r.cost; acc.value += r.value; return acc }, { cost: 0, value: 0 })
+  const pendingCount = rows.filter(r => r.currentPrice == null).length                      // price not loaded yet
+  const noRate  = [...new Set(rows.filter(r => r.currentPrice != null && r.fx == null).map(r => r.cur))] // no exchange rate
+  const foreign = [...new Set(rows.filter(r => r.cur !== 'USD' && r.fx != null).map(r => r.cur))]
   totals.pnl    = totals.value - totals.cost
   totals.pnlPct = totals.cost > 0 ? (totals.pnl / totals.cost) * 100 : null
   // YTD for the whole portfolio: total YTD $ ÷ total starting value (weighted, as brokers show it)
   const ytdRows = rows.filter(r => r.ytdAbs != null)
   totals.ytd      = ytdRows.reduce((s, r) => s + r.ytdAbs, 0)
-  totals.ytdStart = ytdRows.reduce((s, r) => s + r.ytdStart * r.qty, 0)
+  totals.ytdStart = ytdRows.reduce((s, r) => s + r.ytdStart * r.qty * r.fx, 0)
   totals.ytdPct   = totals.ytdStart > 0 ? (totals.ytd / totals.ytdStart) * 100 : null
   const assumedCount = rows.filter(r => r.assumed).length
   const noStartRows  = rows.filter(r => r.noStart)
@@ -466,6 +499,13 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
           </div>
         )}
       </div>
+      {(foreign.length > 0 || noRate.length > 0 || pendingCount > 0) && (
+        <div className="text-[10px] font-mono text-slate-600">
+          {foreign.length > 0 && <>Totals in USD · {foreign.join(', ')} prices converted at today's exchange rate. </>}
+          {noRate.length > 0 && <span className="text-terminal-amber">No exchange rate right now for {noRate.join(', ')} — left out of the totals. </span>}
+          {pendingCount > 0 && <>{pendingCount} position{pendingCount === 1 ? '' : 's'} still loading — not yet in the totals.</>}
+        </div>
+      )}
       {noStartRows.length > 0 && (
         <div className="text-[10px] font-mono text-slate-600">
           Not in the {YEAR} total: {noStartRows.map(r => r.ticker).join(', ')} — no Dec 31 price is available. If you bought {noStartRows.length === 1 ? 'it' : 'them'} in {YEAR}, add the purchase date with ✎ and {noStartRows.length === 1 ? 'it' : 'they'} will count from your buy price.
@@ -525,13 +565,13 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                     <td style={{...tdStyle('center'), color:'#334155', fontSize:'11px'}}>{idx + 1}</td>
                     <td style={tdStyle('left')}><span style={{fontWeight:'700',fontSize:'13px',color:'#7dd3fc'}}>{r.ticker}</span></td>
                     <td style={tdStyle()}><span style={{color:'#cbd5e1'}}>{r.qty}</span></td>
-                    <td style={tdStyle()}><span style={{color:'#94a3b8'}}>{fmtPrice(r.buyPrice)}</span></td>
+                    <td style={tdStyle()}><span style={{color:'#94a3b8'}}>{fmtMoney(r.buyPrice, r.cur)}</span></td>
                     <td style={tdStyle()}>
                       {isLoading ? <span style={{color:'#475569',fontSize:'11px'}}>…</span>
-                        : r.currentPrice != null ? <span style={{fontWeight:'600',color:'#f1f5f9'}}>{fmtPrice(r.currentPrice)}</span>
+                        : r.currentPrice != null ? <span style={{fontWeight:'600',color:'#f1f5f9'}}>{fmtMoney(r.currentPrice, r.cur)}{quotes[r.ticker]?.pxCheck?.status === 'warn' && <span title={`Price sources disagree (Finnhub ${fmtPrice(quotes[r.ticker].pxCheck.fh)}, ${quotes[r.ticker].pxCheck.diff}%) — check your broker`} style={{color:'#ffb800',marginLeft:4,cursor:'help'}}>⚠</span>}</span>
                         : <span style={{color:'#475569'}}>—</span>}
                     </td>
-                    <td style={tdStyle()}><span style={{color:'#94a3b8'}}>{fmtPrice(r.cost)}</span></td>
+                    <td style={tdStyle()} title={r.cur !== 'USD' ? (r.fx != null ? `Converted to USD at today's rate (1 ${r.cur === 'GBX' ? 'penny' : r.cur === 'ILA' ? 'agora' : r.cur} = $${r.fx.toPrecision(3)}). Your buy price is taken as ${r.cur}.` : `No ${r.cur} exchange rate available right now — left out of the totals`) : undefined}><span style={{color:'#94a3b8'}}>{r.cost != null ? fmtPrice(r.cost) : '—'}</span></td>
                     <td style={tdStyle()}>
                       {r.value != null ? <span style={{fontWeight:'600',color:'#f1f5f9'}}>{fmtPrice(r.value)}</span> : <span style={{color:'#475569'}}>—</span>}
                     </td>
@@ -793,16 +833,17 @@ export default function CustomPortfolios({ onAnalyze }) {
     setPortfolios(updated)
     localStorage.setItem('mc_custom_portfolios_v1', JSON.stringify(updated))
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(async () => {
+    const attempt = async (retry) => {
       try {
         await saveToSheet(userId, updated)
         setSyncStatus('saved')
         setTimeout(() => setSyncStatus(''), 2000)
       } catch {
-        setSyncStatus('error')
-        setTimeout(() => setSyncStatus(''), 3000)
+        setSyncStatus('error')                                   // stays visible until a save succeeds
+        if (retry) saveTimer.current = setTimeout(() => attempt(false), 15000)
       }
-    }, 1000)
+    }
+    saveTimer.current = setTimeout(() => attempt(true), 1000)
   }, [])
 
   useEffect(() => {
@@ -915,7 +956,7 @@ export default function CustomPortfolios({ onAnalyze }) {
         <div className="ml-auto flex items-center gap-3">
           {syncing && <span className="font-mono text-[10px] text-slate-600 uppercase tracking-wider animate-pulse">Syncing…</span>}
           {syncStatus === 'saved' && <span className="font-mono text-[10px] text-terminal-green uppercase tracking-wider">✓ Saved</span>}
-          {syncStatus === 'error' && <span className="font-mono text-[10px] text-terminal-red uppercase tracking-wider">⚠ Sync failed</span>}
+          {syncStatus === 'error' && <span title="Your changes are kept on this device and will be saved again automatically. If this persists, check your connection." className="font-mono text-[10px] text-terminal-red uppercase tracking-wider">⚠ Not saved to the cloud — kept on this device</span>}
           <UserIdBadge userId={userId} onReset={() => { saveId(''); setUserId(null); setPortfolios([]) }} />
         </div>
       </div>
