@@ -714,27 +714,54 @@ const StockSelector = React.memo(function StockSelector({ allStocks, loading, on
 // ── Decision check: only confirmed information, and whether it agrees ──
 let RD_BOARD_P = null
 const rdBoardOnce = () => RD_BOARD_P || (RD_BOARD_P = jsonp(APPS_SCRIPT_URL + '?action=getNewsRadar').catch(e => { RD_BOARD_P = null; throw e }))
-// Whole calendar days from today (local) to a 'YYYY-MM-DD' date; null if missing, unreadable or past
-export function earningsDays(e, now = new Date()) {
+// ── Earnings timing, in US market time (New York): reports come out before the 9:30 open or after the 16:00 close ──
+const etNow = now => {
+  const o = {}
+  new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(now).forEach(p => { o[p.type] = p.value })
+  return { y: +o.year, m: +o.month, d: +o.day, min: (+o.hour % 24) * 60 + +o.minute }
+}
+const utcDay = (y, m, d) => Date.UTC(y, m - 1, d)
+const nextWeekday = t => { let x = t + 864e5; while ([0, 6].includes(new Date(x).getUTCDay())) x += 864e5; return x }
+// → null (nothing to show) | { kind: 'soon', days } | { kind: 'reported', ago: 0 | 1 | 'Fri'… }
+export function earningsState(e, now = new Date()) {
   const m = e && typeof e.date === 'string' && e.date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!m) return null
-  const d = Math.round((new Date(+m[1], +m[2] - 1, +m[3]) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5)
-  return d >= 0 ? d : null
+  const et = etNow(now), day = utcDay(+m[1], +m[2], +m[3]), today = utcDay(et.y, et.m, et.d)
+  const days = Math.round((day - today) / 864e5)
+  if (days > 14) return null
+  if (days >= 1) return { kind: 'soon', days }
+  if (days === 0) {
+    if (e.hour === 'bmo' && et.min >= 9 * 60 + 30) return { kind: 'reported', ago: 0 }
+    if (e.hour === 'amc' && et.min >= 16 * 60) return { kind: 'reported', ago: 0 }
+    return { kind: 'soon', days: 0 }
+  }
+  // after-the-close reports move the price on the NEXT trading day — keep saying so until that day ends (Fri report → through Monday)
+  if (e.hour === 'amc' && today <= nextWeekday(day)) return { kind: 'reported', ago: days === -1 ? 1 : new Date(day).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }) }
+  return null
 }
 const fmtDay = ymd => { const [y, mo, d] = ymd.split('-').map(Number); return new Date(y, mo - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
-export function decisionRows(data, board) {
+export function earningsRow(e, now = new Date()) {
+  const st = earningsState(e, now)
+  if (!st) return null
+  if (st.kind === 'reported') {
+    const when = st.ago === 0 ? 'today' : st.ago === 1 ? 'yesterday' : 'on ' + st.ago
+    const text = st.ago === 0 && e.hour === 'amc' ? `Reported today after the close (${fmtDay(e.date)}) — expect the move at the next open`
+      : `Reported ${when} ${e.hour === 'bmo' ? 'before the open' : 'after the close'} (${fmtDay(e.date)}) — the price may still be adjusting`
+    return { tone: 'warn', dir: 0, soon: 'just', text }
+  }
+  const d = st.days, when = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`
+  const hr = e.hour === 'bmo' ? ', before the open' : e.hour === 'amc' ? ', after the close' : ''
+  return { tone: d <= 7 ? 'warn' : 'info', dir: 0, soon: d <= 7 ? 'close' : false, text: `Earnings ${when} (${fmtDay(e.date)}${hr})${d <= 7 ? ' — expect a big move either way' : ''}` }
+}
+export function decisionRows(data, board, now = new Date()) {
   const rows = []
   const pc = data.priceCheck || {}
   rows.push(pc.status === 'ok' ? { tone: 'ok', dir: 0, text: `Price confirmed by two sources (Google Finance ${fmtPrice(pc.gf)} · Finnhub ${fmtPrice(pc.fh)})` }
     : pc.status === 'warn' ? { tone: 'warn', dir: 0, gate: true, text: `Price sources disagree by ${Math.abs(pc.diff).toFixed(1)}% (Google Finance ${fmtPrice(pc.gf)} vs Finnhub ${fmtPrice(pc.fh)}) — check your broker before trading` }
     : { tone: 'na', dir: 0, text: 'Price from one source only' })
-  const ed = earningsDays(data.nextEarnings)
-  if (ed != null && ed <= 14) {
-    const e = data.nextEarnings, when = ed === 0 ? 'today' : ed === 1 ? 'tomorrow' : `in ${ed} days`
-    const hr = e.hour === 'bmo' ? ', before the open' : e.hour === 'amc' ? ', after the close' : ''
-    rows.push({ tone: ed <= 7 ? 'warn' : 'info', dir: 0, soon: ed <= 7,
-      text: `Earnings ${when} (${fmtDay(e.date)}${hr})${ed <= 7 ? ' — expect a big move either way' : ''}` })
-  }
+  const er = earningsRow(data.nextEarnings, now)
+  if (er) rows.push(er)
   const mc = data.mcScore
   if (mc && mc.score != null && mc.incomplete) rows.push({ tone: 'warn', dir: 0, text: `MC Score incomplete right now (${mc.score.toFixed(1)}) — price history was busy; try again in a minute` })
   // A low-confidence score (too little data behind it) is shown but never counted as a vote
@@ -779,7 +806,7 @@ export function decisionRows(data, board) {
     : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — routine for a company this size, often pre-planned` }
     : { tone: 'na', dir: 0, text: 'No insider trades in the last 90 days' })
   const pos = rows.filter(r => r.dir > 0).length, neg = rows.filter(r => r.dir < 0).length
-  const but = rows.some(r => r.soon) ? ' — but earnings are close' : ''
+  const but = rows.some(r => r.soon === 'just') ? ' — but earnings just came out' : rows.some(r => r.soon === 'close') ? ' — but earnings are close' : ''
   const summary = rows.some(r => r.gate) ? { tone: 'warn', text: 'Verify the price first — the data sources disagree' }
     : pos >= 2 && neg === 0 ? { tone: but ? 'warn' : 'pos', text: `Signals agree: positive (${pos} checks point the same way)${but}` }
     : neg >= 2 && pos === 0 ? { tone: but ? 'warn' : 'neg', text: `Signals agree: negative (${neg} checks point the same way)${but}` }
