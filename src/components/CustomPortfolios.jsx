@@ -465,8 +465,6 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
   totals.ytd      = ytdRows.reduce((s, r) => s + r.ytdAbs, 0)
   totals.ytdStart = ytdRows.reduce((s, r) => s + r.ytdStart * r.qty * r.fx, 0)
   totals.ytdPct   = totals.ytdStart > 0 ? (totals.ytd / totals.ytdStart) * 100 : null
-  const assumedCount = rows.filter(r => r.assumed).length
-  const noStartRows  = rows.filter(r => r.noStart)
   const money = v => (v >= 0 ? '+' : '−') + '$' + fmtLarge(Math.abs(v))
   const moneyExact = v => (v >= 0 ? '+' : '−') + '$' + Math.round(Math.abs(v)).toLocaleString('en-US')
   const pnlColor = v => v >= 0 ? '#00ff88' : '#ff4466'
@@ -504,16 +502,6 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
           {foreign.length > 0 && <>Totals in USD · {foreign.join(', ')} prices converted at today's exchange rate. </>}
           {noRate.length > 0 && <span className="text-terminal-amber">No exchange rate right now for {noRate.join(', ')} — left out of the totals. </span>}
           {pendingCount > 0 && <>{pendingCount} position{pendingCount === 1 ? '' : 's'} still loading — not yet in the totals.</>}
-        </div>
-      )}
-      {noStartRows.length > 0 && (
-        <div className="text-[10px] font-mono text-slate-600">
-          Not in the {YEAR} total: {noStartRows.map(r => r.ticker).join(', ')} — no Dec 31 price is available. If you bought {noStartRows.length === 1 ? 'it' : 'them'} in {YEAR}, add the purchase date with ✎ and {noStartRows.length === 1 ? 'it' : 'they'} will count from your buy price.
-        </div>
-      )}
-      {assumedCount > 0 && (
-        <div className="text-[10px] font-mono text-slate-600">
-          {assumedCount} position{assumedCount === 1 ? '' : 's'} without a purchase date {assumedCount === 1 ? 'is' : 'are'} counted from the Dec 31 close. If you bought {assumedCount === 1 ? 'it' : 'any of them'} in {YEAR}, add the date with ✎ for an exact YTD figure.
         </div>
       )}
 
@@ -592,7 +580,7 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                     </td>
                     <td style={tdStyle()} title={r.ytdFrom ? `YTD from ${r.ytdFrom}` : r.noStart ? 'No Dec 31 price available — add a purchase date (✎) if you bought it this year' : 'Start-of-year price not available yet'}>
                       {r.ytdPct != null
-                        ? <span style={{fontWeight:'700',color:pnlColor(r.ytdPct)}}>{fmtPct(r.ytdPct)}{r.assumed && <span style={{color:'#475569',fontWeight:400}}> *</span>}</span>
+                        ? <span style={{fontWeight:'700',color:pnlColor(r.ytdPct)}}>{fmtPct(r.ytdPct)}{r.assumed && <span title="No purchase date — counted from the Dec 31 close. If you bought it this year, add the date with ✎." style={{color:'#475569',fontWeight:400,cursor:'help'}}> *</span>}</span>
                         : <span style={{color:'#475569'}}>—</span>}
                     </td>
                     <td style={tdStyle()}>
