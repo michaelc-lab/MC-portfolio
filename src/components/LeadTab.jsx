@@ -1,64 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { APPS_SCRIPT_URL, jsonp } from '../lib/api'
 import { oddsLabel } from '../lib/odds'
-import { TrendingUp, TrendingDown, Zap, AlertTriangle, Activity, Calendar, Sparkles, Newspaper } from 'lucide-react'
-import { fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
+import { TrendingUp, TrendingDown, Zap, AlertTriangle, Calendar, Sparkles } from 'lucide-react'
+import { fmtPrice, fmtPct } from '../lib/utils'
 
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwUQqqI6PAa64xq5ZALeJSUWuy86pVtSEG6rIMhgNOQ-7XS-t7PJRRncJ1mi7OAwd0/exec'
 
-function jsonp(url) {
-  return new Promise((resolve, reject) => {
-    const cbName = '_cb_' + Math.random().toString(36).slice(2)
-    const script = document.createElement('script')
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('Timeout')) }, 20000)
-    function cleanup() { clearTimeout(timeout); delete window[cbName]; if (script.parentNode) script.parentNode.removeChild(script) }
-    window[cbName] = (data) => { cleanup(); resolve(data) }
-    script.onerror = () => { cleanup(); reject(new Error('Failed')) }
-    script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName + '&cb=' + Date.now()
-    document.head.appendChild(script)
-  })
-}
 
-// ── Market open/closed indicator ──────────────────────────────
-function MarketStatus() {
-  const [status, setStatus] = useState(null)
-
-  useEffect(() => {
-    function compute() {
-      // US Eastern time
-      const now = new Date()
-      const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }))
-      const day = et.getDay() // 0=Sun,6=Sat
-      const h = et.getHours()
-      const m = et.getMinutes()
-      const mins = h * 60 + m
-      const isWeekday = day >= 1 && day <= 5
-      const isMarketHours = mins >= 570 && mins < 960 // 9:30–16:00
-      const isPreMarket = isWeekday && mins >= 240 && mins < 570   // 4:00–9:30
-      const isAfterHours = isWeekday && mins >= 960 && mins < 1200 // 16:00–20:00
-
-      if (isWeekday && isMarketHours) setStatus('open')
-      else if (isPreMarket || isAfterHours) setStatus('extended')
-      else setStatus('closed')
-    }
-    compute()
-    const id = setInterval(compute, 60000)
-    return () => clearInterval(id)
-  }, [])
-
-  const cfg = {
-    open:     { color: 'bg-terminal-green', text: 'Market Open',    ring: 'shadow-terminal-green/40' },
-    extended: { color: 'bg-terminal-amber', text: 'Extended Hours', ring: 'shadow-terminal-amber/40' },
-    closed:   { color: 'bg-terminal-red',   text: 'Market Closed',  ring: 'shadow-terminal-red/40'   },
-  }
-  const c = cfg[status] || cfg.closed
-
-  return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 rounded border border-white/10 bg-white/[0.03] text-[11px] font-mono`}>
-      <span className={`w-2 h-2 rounded-full ${c.color} shadow-lg ${c.ring} animate-pulse-slow`} />
-      <span className="text-slate-400 uppercase tracking-wider">{c.text}</span>
-    </div>
-  )
-}
 
 // ── KPI card ──────────────────────────────────────────────────
 function KpiCard({ label, value, sub, color = 'accent', icon: Icon, onClick, clickable, isMobile }) {
@@ -225,36 +172,6 @@ function MoverTable({ title, rows, meta, useWeek = false, type = 'gain' }) {
   )
 }
 
-// ── ATH table ─────────────────────────────────────────────────
-function ATHTable({ rows }) {
-  if (!rows.length) return (
-    <div className="panel p-8 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider">No tickers at ATH</div>
-  )
-  return (
-    <div className="panel overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
-        <Zap size={14} className="text-electric-400" />
-        <span className="font-display font-semibold text-[13px] text-slate-200">At All-Time High</span>
-        <span className="ml-auto font-mono text-[10px] uppercase tracking-wider text-slate-600">within 0.5%</span>
-      </div>
-      <table className="data-table">
-        <thead><tr><th>Ticker</th><th>Company</th><th>Sector</th><th className="text-right">Price</th><th className="text-right">Δ Today</th><th className="text-right">Δ 7d</th></tr></thead>
-        <tbody>
-          {rows.map(r => (
-            <tr key={r.ticker}>
-              <td><span className="font-mono font-semibold text-[13px] text-electric-300">{r.ticker}</span></td>
-              <td><span className="text-[12px] text-slate-400">{r.company}</span></td>
-              <td><span className="font-mono text-[10px] uppercase tracking-wider text-slate-500 bg-white/5 px-2 py-0.5 rounded">{r.sector}</span></td>
-              <td className="text-right"><span className="font-mono text-[12px] font-semibold text-slate-200">{fmtPrice(r.price)}</span></td>
-              <td className="text-right"><span className={`font-mono text-[12px] ${r.dayChangePct > 0 ? 'positive' : r.dayChangePct < 0 ? 'negative' : 'neutral'}`}>{r.dayChangePct != null ? fmtPct(r.dayChangePct) : '—'}</span></td>
-              <td className="text-right"><span className={`font-mono text-[12px] ${r.weekChangePct > 0 ? 'positive' : r.weekChangePct < 0 ? 'negative' : 'neutral'}`}>{r.weekChangePct != null ? fmtPct(r.weekChangePct) : '—'}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
 
 // ── Upcoming Earnings (30 days) ───────────────────────────────
 function UpcomingEarnings() {
@@ -710,6 +627,34 @@ function ScoreLeaders({ onAnalyze, isMobile }) {
   )
 }
 
+// ── System health: when did each background job last work? A banner only when something is actually broken ──
+let SH_P = null, SH_AT = 0
+const healthOnce = () => { if (!SH_P || Date.now() - SH_AT > 120000) { SH_AT = Date.now(); SH_P = jsonp(`${APPS_SCRIPT_URL}?action=getSystemHealth`).catch(e => { SH_P = null; throw e }) } return SH_P }
+const shAge = m => m == null ? 'not yet' : m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`
+export function SystemHealth({ where }) {
+  const [h, setH] = useState(null)
+  useEffect(() => { let alive = true; healthOnce().then(x => alive && setH(x)).catch(() => {}); return () => { alive = false } }, [])
+  if (!h || !h.jobs) return null
+  const bad = h.jobs.filter(j => !j.optional && (j.status === 'down' || j.status === 'stale'))
+  if (where === 'banner') {
+    if (!bad.length) return null
+    return (
+      <div className="panel px-4 py-3 border border-terminal-amber/40 font-display text-[13px] text-terminal-amber" data-testid="health-banner">
+        ⚠ {bad.map(j => j.status === 'down' ? `${j.name} is failing` : `${j.name} hasn't run since ${shAge(j.lastOkMin)}`).join(' · ')}
+        {bad[0].error ? <span className="text-slate-500"> — {bad[0].error}</span> : null}
+        <span className="text-slate-500"> · Information from {bad.length === 1 ? 'it' : 'these'} may be out of date.</span>
+      </div>
+    )
+  }
+  const shown = h.jobs.filter(j => j.lastOkMin != null || !j.optional)
+  return (
+    <div className="font-display text-[11px] text-slate-600 px-1" data-testid="health-footer">
+      System health <span className={h.ok ? 'text-terminal-green/80' : 'text-terminal-amber'}>{h.ok ? '✓' : '⚠'}</span>
+      {shown.map(j => <span key={j.id}> · {j.name} {j.status === 'down' ? <span className="text-terminal-amber">failing</span> : shAge(j.lastOkMin)}</span>)}
+    </div>
+  )
+}
+
 export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
   const withDay    = portfolio.filter(r => r.dayChangePct != null)
   const withWeek   = portfolio.filter(r => r.weekChangePct != null)
@@ -722,6 +667,7 @@ export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
 
   return (
     <div className="space-y-5 animate-fade-in">
+      <SystemHealth where="banner" />
       {/* KPIs */}
       <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-3'}`}>
         <SectorPulse portfolio={portfolio} isMobile={isMobile} />
@@ -772,6 +718,7 @@ export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
           onAnalyze={onAnalyze}
         />
       )}
+      <SystemHealth where="footer" />
     </div>
   )
 }
