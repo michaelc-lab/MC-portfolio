@@ -55,6 +55,9 @@ function StripItem({ icon, label, value, change, iconBg, compact }) {
 }
 
 export default function Header({ data, loading, error, lastUpdated, onRefresh, isMobile }) {
+  const [, setTick] = useState(0)
+  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 30000); return () => clearInterval(id) }, [])
+  const ageMin = lastUpdated ? Math.floor((Date.now() - new Date(lastUpdated).getTime()) / 60000) : null
   const fx = data?.fx || {}
   const crypto = data?.crypto || {}
   const commodities = data?.commodities || {}
@@ -79,6 +82,8 @@ export default function Header({ data, loading, error, lastUpdated, onRefresh, i
               <Activity size={9} />
               <span>{error ? 'Err' : loading ? '…' : `${resolved}/${portfolio.length}`}</span>
             </div>
+            {lastUpdated && <span data-testid="updated-ago" title="Refreshes by itself every 5 min · Google Finance prices can be up to 20 min delayed"
+              className={`font-mono text-[10px] ${ageMin > 15 ? 'text-terminal-amber' : 'text-slate-500'}`}>{ageMin < 1 ? 'just now' : `${ageMin} min ago`}</span>}
             <button onClick={onRefresh} disabled={loading}
               className="p-1.5 rounded border border-electric-500/20 bg-electric-500/5 text-electric-400 disabled:opacity-40">
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
@@ -127,9 +132,12 @@ export default function Header({ data, loading, error, lastUpdated, onRefresh, i
           <MarketIndicator />
           <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded border font-mono text-[11px] ${error ? 'border-red-500/30 bg-red-500/10 text-red-400' : loading ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-400' : 'border-terminal-green/30 bg-terminal-green/10 text-terminal-green'}`}>
             <Activity size={10} />
-            <span className="uppercase tracking-wider">{error ? 'Error' : loading ? 'Loading…' : `Live · ${resolved}/${portfolio.length}`}</span>
+            <span className="uppercase tracking-wider">{error ? 'Error' : loading ? 'Loading…' : `Prices · ${resolved}/${portfolio.length}`}</span>
           </div>
-          {lastUpdated && <span className="text-slate-600 font-mono text-[11px] hidden sm:block">{formatTime(lastUpdated)}</span>}
+          {lastUpdated && <span title={'Last refreshed ' + formatTime(lastUpdated) + ' · refreshes by itself every 5 min · Google Finance prices can be up to 20 min delayed'}
+            className={`font-mono text-[11px] ${ageMin > 15 ? 'text-terminal-amber' : 'text-slate-600'}`} data-testid="updated-ago">
+            {ageMin === null ? '' : ageMin < 1 ? 'Updated just now' : `Updated ${ageMin} min ago`}{ageMin > 15 ? ' — may be outdated' : ''}
+          </span>}
           <button onClick={onRefresh} disabled={loading}
             className="flex items-center gap-2 px-3 py-1.5 rounded border border-electric-500/20 bg-electric-500/5 text-electric-400 text-[11px] font-mono uppercase tracking-wider hover:border-electric-500/40 hover:bg-electric-500/10 transition-all disabled:opacity-40">
             <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />Refresh
