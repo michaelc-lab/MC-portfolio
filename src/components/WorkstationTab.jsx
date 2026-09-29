@@ -711,9 +711,15 @@ const StockSelector = React.memo(function StockSelector({ allStocks, loading, on
 })
 
 // ── Analyze view ──────────────────────────────────────────────
-// ── Decision check: only confirmed information, and whether it agrees ──
-let RD_BOARD_P = null
-const rdBoardOnce = () => RD_BOARD_P || (RD_BOARD_P = jsonp(APPS_SCRIPT_URL + '?action=getNewsRadar').catch(e => { RD_BOARD_P = null; throw e }))
+// ── Decision check: the checks that count, and whether they agree ──
+// The radar re-runs every 30 min: reuse the board for 10 min at most, then fetch it again
+let RD_BOARD_P = null, RD_BOARD_AT = 0
+const rdBoardOnce = () => {
+  if (RD_BOARD_P && Date.now() - RD_BOARD_AT < 10 * 60e3) return RD_BOARD_P
+  RD_BOARD_AT = Date.now()
+  return (RD_BOARD_P = jsonp(APPS_SCRIPT_URL + '?action=getNewsRadar').catch(e => { RD_BOARD_P = null; throw e }))
+}
+const hoursAgo = (iso, now) => { const t = new Date(iso).getTime(); return isFinite(t) ? (now.getTime() - t) / 36e5 : null }
 // ── Earnings timing, in US market time (New York): reports come out before the 9:30 open or after the 16:00 close ──
 const etNow = now => {
   const o = {}
@@ -773,15 +779,20 @@ export function decisionRows(data, board, now = new Date()) {
       text: `${d > 0 ? 'Favorable odds' : d < 0 ? 'Unfavorable odds' : 'Neutral odds'} — MC Score ${s.toFixed(1)}${mc.universe && mc.universe.rank ? ` (#${mc.universe.rank} of ${mc.universe.n})` : ''}`,
       sub: d > 0 ? 'Historically: steadier results, not bigger winners' : d < 0 ? 'Historically: mostly flat, with rare big jumps' : null })
   }
+  const rdAge = board && !board.error && board.meta ? hoursAgo(board.meta.lastRun, now) : null
   if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
   else if (board.error) rows.push({ tone: 'na', dir: 0, text: 'News unavailable right now' })
+  else if (rdAge != null && rdAge > 2) rows.push({ tone: 'na', dir: 0, text: `News Radar last updated ${Math.round(rdAge)} h ago — news not counted` })
   else {
     const sig = (board.signals || []).find(x => x.ticker === data.ticker)
-    if (!sig || !sig.dir) rows.push({ tone: 'na', dir: 0, text: 'No significant news in the last 2 days' })
+    if (!sig || !sig.dir) rows.push({ tone: 'na', dir: 0, text: 'Not on the News Radar (last 2 days)' })
     else {
-      const d = sig.against || sig.aiOnly ? 0 : sig.dir
-      rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d, url: sig.sec ? sig.sec.url : sig.url,
-        text: `${sig.dir > 0 ? 'Positive' : 'Negative'} news${sig.sec ? ` — confirmed by an official SEC filing (${sig.sec.form}, ${sig.sec.date})` : sig.aiOnly ? ' — inferred by AI, not confirmed' : ' — not officially confirmed'}${sig.against ? ', but the stock is moving against it' : ''}` })
+      // Only news the radar rates Medium or High, not AI-only, and not contradicted by the price, votes
+      const weak = sig.strength === 'Low', d = sig.against || sig.aiOnly || weak ? 0 : sig.dir
+      const why = sig.aiOnly ? ' — inferred by AI, not counted' : weak ? ' — weak signal, not counted' : ` — ${String(sig.strength || 'medium').toLowerCase()} signal on the News Radar`
+      rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d, url: sig.url,
+        text: `${sig.dir > 0 ? 'Positive' : 'Negative'} news${why}${sig.against ? ', but the stock is moving against it — not counted' : ''}`,
+        sub: sig.sec ? `The company also filed ${/^8/.test(sig.sec.form) ? 'an' : 'a'} ${sig.sec.form} on ${sig.sec.date} — open it to see if it's related` : null, subUrl: sig.sec ? sig.sec.url : null })
     }
   }
   if (data.secOn) {
@@ -838,13 +849,13 @@ function DecisionCheck({ data }) {
               <span style={{ color: t[1] }} className="w-4 text-center flex-shrink-0">{t[0]}</span>
               <div className="min-w-0">
                 <span className="text-slate-300">{r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.text}</a> : r.text}</span>
-                {r.sub && <div className="text-[11px] text-slate-600">{r.sub}</div>}
+                {r.sub && <div className="text-[11px] text-slate-600">{r.subUrl ? <a href={r.subUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.sub}</a> : r.sub}</div>}
               </div>
             </div>
           )
         })}
       </div>
-      <div className="mt-3 text-[11px] text-slate-600">Only confirmed information counts toward agreement. This is a checklist, not advice.</div>
+      <div className="mt-3 text-[11px] text-slate-600">Weak, AI-only or contradicted signals don't count toward agreement. This is a checklist, not advice.</div>
     </div>
   )
 }
