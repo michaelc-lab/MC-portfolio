@@ -868,8 +868,16 @@ export function decisionRows(data, board) {
   // the Analyze payload stores each trade's date as `date` (Finnhub's transactionDate, renamed)
   const recent = (data.insiders || []).filter(x => new Date(x.date || x.transactionDate || x.filingDate).getTime() >= since)
   const buys = recent.filter(x => x.transactionCode === 'P' && x.isPlanBuy !== true), sells = recent.filter(x => x.transactionCode === 'S')
+  // Same rule as the MC Score: selling only matters when it is large relative to the company's size
+  const mcapM = data.profile && Number(data.profile.marketCapitalization) > 0 ? Number(data.profile.marketCapitalization) : null
+  const since180 = Date.now() - 180 * 864e5
+  const sold180 = (data.insiders || []).filter(x => x.transactionCode === 'S' && new Date(x.date || x.transactionDate || x.filingDate).getTime() >= since180)
+    .reduce((s, x) => s + Math.abs(Number(x.value) || 0), 0)
+  const sellPct = mcapM ? sold180 / (mcapM * 1e6) * 100 : null
   rows.push(buys.length ? { tone: 'pos', dir: 1, text: `Insiders bought shares with their own money (${buys.length} purchase${buys.length === 1 ? '' : 's'} in 90 days)` }
-    : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — common, often pre-planned` }
+    : sellPct !== null && sellPct >= 1 ? { tone: 'neg', dir: -1, text: `Insiders sold ~${sellPct.toFixed(1)}% of the company in 6 months — unusually large` }
+    : sellPct !== null && sellPct >= 0.25 ? { tone: 'na', dir: 0, text: `Insiders sold ~${sellPct.toFixed(2)}% of the company in 6 months — notable, but not decisive` }
+    : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — routine for a company this size, often pre-planned` }
     : { tone: 'na', dir: 0, text: 'No insider trades in the last 90 days' })
   const pos = rows.filter(r => r.dir > 0).length, neg = rows.filter(r => r.dir < 0).length
   const summary = rows.some(r => r.gate) ? { tone: 'warn', text: 'Verify the price first — the data sources disagree' }
