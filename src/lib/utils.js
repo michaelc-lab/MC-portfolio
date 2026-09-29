@@ -7,3 +7,13 @@ export const statusBadgeClass = (s) => { switch (s) { case 'ATH': return 'badge-
 export const sortRows = (rows, key, dir) => { const numKeys = ['price','ath','dd','dayChangePct','weekChangePct','ytdPct']; const sign = dir === 'asc' ? 1 : -1; return [...rows].sort((a, b) => { let av = a[key], bv = b[key]; if (numKeys.includes(key)) { if (av == null && bv == null) return 0; if (av == null) return 1; if (bv == null) return -1; return (av - bv) * sign } av = (av || '').toString().toLowerCase(); bv = (bv || '').toString().toLowerCase(); return av.localeCompare(bv) * sign }) }
 export const filterRows = (rows, { q, sector, status }, hasThesis = false) => { const query = (q || '').toLowerCase().trim(); return rows.filter(r => { if (sector && r.sector !== sector) return false; if (status && r.status !== status) return false; if (query) { let hay = `${r.ticker} ${r.company} ${r.sector}`.toLowerCase(); if (hasThesis && r.thesis) hay += ' ' + r.thesis.toLowerCase(); if (!hay.includes(query)) return false } return true }) }
 export const formatTime = (date) => { if (!date) return '—'; return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+
+const CUR_SYMBOL = { USD: '$', AUD: 'A$', CAD: 'C$', EUR: '€', GBP: '£', JPY: '¥', HKD: 'HK$', CHF: 'CHF ', SGD: 'S$', KRW: '₩', SEK: 'kr ', NOK: 'kr ', DKK: 'kr ', ILS: '₪' }
+export const fmtMoney = (n, cur) => {
+  if (n == null || isNaN(n)) return '—'
+  if (!cur || cur === 'USD') return fmtPrice(n)
+  if (cur === 'GBX') return n.toLocaleString(undefined, { maximumFractionDigits: 1 }) + 'p'
+  if (cur === 'ILA') return n.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' ag.'
+  const d = cur === 'JPY' || cur === 'KRW' ? 0 : n < 10 ? 3 : 2
+  return (CUR_SYMBOL[cur] || cur + ' ') + n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })
+}
