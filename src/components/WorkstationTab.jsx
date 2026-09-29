@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { APPS_SCRIPT_URL, jsonp } from '../lib/api'
 import { oddsLabel } from '../lib/odds'
-import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Shield, Sparkles } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend } from 'recharts'
+import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Sparkles } from 'lucide-react'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
 import { fetchWorkstationData, fetchCompareData } from '../hooks/usePortfolioData'
 
@@ -139,31 +140,11 @@ const TOOLTIPS = {
     <i>Buys are meaningful. Sales are often planned (diversification, taxes) — less significant unless large &amp; sudden</i>`,
 }
 
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwUQqqI6PAa64xq5ZALeJSUWuy86pVtSEG6rIMhgNOQ-7XS-t7PJRRncJ1mi7OAwd0/exec'
 
-function jsonpOnce(url, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const cbName = '_cb_' + Math.random().toString(36).slice(2)
-    const script = document.createElement('script')
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('Timeout')) }, timeoutMs)
-    function cleanup() { clearTimeout(timeout); delete window[cbName]; if (script.parentNode) script.parentNode.removeChild(script) }
-    window[cbName] = (data) => { cleanup(); resolve(data) }
-    script.onerror = () => { cleanup(); reject(new Error('Script load failed')) }
-    script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName + '&cb=' + Date.now()
-    document.head.appendChild(script)
-  })
-}
 
 // Analyzing a stock chains ~12 external API calls server-side, and the background
 // scorer can add contention; a slow-but-working request shouldn't surface as an error.
 // One retry with a longer budget absorbs that, without masking a genuinely broken request.
-async function jsonp(url) {
-  try {
-    return await jsonpOnce(url, 30000)
-  } catch (e) {
-    return await jsonpOnce(url, 45000)
-  }
-}
 
 // ── Shared helpers ────────────────────────────────────────────
 const PERIODS = ['1D', '1W', '1M', '1Q', '6M', '1Y', 'YTD']
@@ -464,71 +445,12 @@ const th = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, lette
 const td = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, whiteSpace: 'nowrap' }
 const pctColor = v => v == null ? '#475569' : v >= 0 ? '#00ff88' : '#ff4466'
 
-// ── History test: the MC Score's price factors on 5 years of your stocks ──
-const BT_VERDICT = {
-  'Evidence it works':    { c: '#00ff88', note: 'Top-ranked stocks beat bottom-ranked ones consistently — unlikely to be luck.' },
-  'Weak evidence':        { c: '#ffb800', note: 'Some edge, but not strong enough to rule out luck.' },
-  'Mixed evidence':       { c: '#ffb800', note: 'The two views disagree: higher scores beat the market more often, but lower-scored stocks earned more on average — the score picks steadier stocks, not bigger winners.' },
-  'Works in reverse':     { c: '#ff4466', note: 'Lower-scored stocks consistently did better — these factors pointed the wrong way here.' },
-  'No evidence it works': { c: '#ff4466', note: 'Ranking by these factors did not separate winners from losers.' },
-  'Not enough history':   { c: '#64748b', note: 'Less than a year of prices — no verdict yet.' },
-}
-function HistoryTest({ bt }) {
-  const box = { background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: 14 }
-  const head = <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">History test · price factors on 5 years of your stocks</div>
-  if (!bt) return <div>{head}<div className="font-mono text-[11px] text-slate-500 animate-pulse">Loading…</div></div>
-  if (bt.error) return <div>{head}<div className="font-mono text-[11px] text-terminal-red">{bt.error}</div></div>
-  if (bt.pending) return (
-    <div>{head}<div className="font-mono text-[11px] text-slate-500 leading-relaxed">
-      {bt.done > 0 ? `Collecting 5 years of prices — ${bt.done} of ${bt.total} stocks so far. Continues automatically in the background.`
-        : 'Not started — run setupBacktest once in Apps Script (about 10–20 minutes, continues by itself).'}
-    </div></div>
-  )
-  const v = BT_VERDICT[bt.verdict] || BT_VERDICT['Not enough history']
-  const qs = bt.quintiles || [], mx = Math.max(0.01, ...qs.map(q => Math.abs(q.avgMonthly || 0)))
-  const pc = x => x == null ? '—' : (x >= 0 ? '+' : '') + x.toFixed(2) + '%'
-  return (
-    <div>
-      {head}
-      <div style={box} className="space-y-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span style={{ color: v.c, border: `1px solid ${v.c}55`, background: v.c + '14', borderRadius: 4, padding: '2px 8px', fontSize: 11 }} className="font-mono font-semibold">{bt.verdict}</span>
-          <span className="font-mono text-[10px] text-slate-500">{bt.months} months · {bt.from} → {bt.to} · ~{bt.avgStocks} stocks/month</span>
-        </div>
-        <div className="font-mono text-[11px] text-slate-400">{v.note}</div>
-        <div className="space-y-1" aria-label="Average monthly return by score group">
-          {qs.map(q => (
-            <div key={q.q} className="flex items-center gap-2 font-mono text-[10px]">
-              <span className="text-slate-500 w-28 flex-shrink-0">{q.q === 5 ? 'Top 20%' : q.q === 1 ? 'Bottom 20%' : `Group ${q.q}`}</span>
-              <div className="flex-1 h-2 rounded bg-white/5 overflow-hidden">
-                <div style={{ width: `${Math.abs(q.avgMonthly || 0) / mx * 100}%`, height: '100%', background: (q.avgMonthly || 0) >= 0 ? '#00ff88' : '#ff4466', opacity: 0.35 + q.q * 0.12 }} />
-              </div>
-              <span style={{ color: (q.avgMonthly || 0) >= 0 ? '#00ff88' : '#ff4466' }} className="w-16 text-right">{pc(q.avgMonthly)}/mo</span>
-            </div>
-          ))}
-        </div>
-        <div className="font-mono text-[11px] text-slate-400 space-y-1 leading-relaxed">
-          <div>Top 20% vs bottom 20%: <span className="text-slate-200">{pc(bt.spread)} per month</span><span className="text-slate-600"> (t = {bt.spreadT == null ? '—' : bt.spreadT.toFixed(1)})</span></div>
-          <div>Top 20% beat the S&amp;P 500 in <span className="text-slate-200">{bt.topBeatSpy == null ? '—' : bt.topBeatSpy.toFixed(0)}%</span> of months <span className="text-slate-600">— the average stock did in {bt.allBeatSpy == null ? '—' : bt.allBeatSpy.toFixed(0)}%</span></div>
-          {bt.spreadMedian != null && <div>Typical month (median): top 20% vs bottom 20% <span className="text-slate-200">{pc(bt.spreadMedian)}</span><span className="text-slate-600"> — not moved by a few stocks that triple</span></div>}
-          {bt.topBeatBottom != null && <div>Top 20% beat the bottom 20% in <span className="text-slate-200">{bt.topBeatBottom.toFixed(0)}%</span> of months</div>}
-          <div>For comparison, simple 12-month momentum alone: <span className="text-slate-200">{pc(bt.spreadMomentumOnly)} per month</span></div>
-          <div className="text-slate-600">Rank correlation with next month (IC) {bt.ic == null ? '—' : bt.ic.toFixed(3)} · positive in {bt.icPositive == null ? '—' : bt.icPositive.toFixed(0)}% of months</div>
-        </div>
-        <div className="font-mono text-[9px] text-slate-600 leading-relaxed space-y-0.5">
-          {(bt.caveats || []).map((x, i) => <div key={i}>· {x}</div>)}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onGenerate }) {
   const [openKey, setOpenKey] = useState(null)
   const [showTrack, setShowTrack] = useState(false)
   const [track, setTrack] = useState(null)
   const [trackLoading, setTrackLoading] = useState(false)
-  const [bt, setBt] = useState(null)
 
   if (!mc) {
     return (
@@ -588,6 +510,7 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
             <span className="font-mono text-[13px] text-slate-600 mb-2">/10</span>
           </div>
           <div style={{ color: col }} className="font-display font-bold text-[18px] mt-1">{oddsLabel(mc.label)} odds</div>
+          {mc.incomplete && <div className="font-mono text-[10px] text-terminal-amber mt-1 leading-snug">⚠ {mc.incomplete}</div>}
           <div className="relative h-2 rounded mt-3" style={{ background: 'linear-gradient(90deg,#ff4466 0%,#ff4466 30%,#ffb800 45%,#ffb800 65%,#00ff88 80%,#00ff88 100%)', opacity: 0.85 }}>
             <div className="absolute -top-1 h-4 rounded-sm"
               style={{ left: range.low * 10 + '%', width: Math.max(0.5, (range.high - range.low) * 10) + '%', background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.35)' }} />
@@ -841,7 +764,8 @@ export function decisionRows(data, board) {
     : pc.status === 'warn' ? { tone: 'warn', dir: 0, gate: true, text: `Price sources disagree by ${Math.abs(pc.diff).toFixed(1)}% (Google Finance ${fmtPrice(pc.gf)} vs Finnhub ${fmtPrice(pc.fh)}) — check your broker before trading` }
     : { tone: 'na', dir: 0, text: 'Price from one source only' })
   const mc = data.mcScore
-  if (mc && mc.score != null) {
+  if (mc && mc.score != null && mc.incomplete) rows.push({ tone: 'warn', dir: 0, text: `MC Score incomplete right now (${mc.score.toFixed(1)}) — price history was busy; try again in a minute` })
+  else if (mc && mc.score != null) {
     const s = mc.score, d = s >= 6.5 ? 1 : s <= 4 ? -1 : 0
     rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d,
       text: `${d > 0 ? 'Favorable odds' : d < 0 ? 'Unfavorable odds' : 'Neutral odds'} — MC Score ${s.toFixed(1)}${mc.universe && mc.universe.rank ? ` (#${mc.universe.rank} of ${mc.universe.n})` : ''}`,
@@ -1244,7 +1168,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                         <div className="space-y-1 overflow-auto max-h-48">
                           {all.slice(0, 8).map((t, i) => {
                             const tx = txLabel(t.isPlanBuy === true ? 'PLAN' : t.transactionCode)
-                            const isMeaningful = t.transactionCode === 'P' || t.transactionCode === 'S'
                             // Skip non-meaningful transaction types
                           if (['F','A','M'].includes(t.transactionCode)) return null
                           return (
