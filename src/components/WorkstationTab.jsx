@@ -714,14 +714,32 @@ const StockSelector = React.memo(function StockSelector({ allStocks, loading, on
 // ── Decision check: only confirmed information, and whether it agrees ──
 let RD_BOARD_P = null
 const rdBoardOnce = () => RD_BOARD_P || (RD_BOARD_P = jsonp(APPS_SCRIPT_URL + '?action=getNewsRadar').catch(e => { RD_BOARD_P = null; throw e }))
+// Whole calendar days from today (local) to a 'YYYY-MM-DD' date; null if missing, unreadable or past
+export function earningsDays(e, now = new Date()) {
+  const m = e && typeof e.date === 'string' && e.date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  const d = Math.round((new Date(+m[1], +m[2] - 1, +m[3]) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5)
+  return d >= 0 ? d : null
+}
+const fmtDay = ymd => { const [y, mo, d] = ymd.split('-').map(Number); return new Date(y, mo - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
 export function decisionRows(data, board) {
   const rows = []
   const pc = data.priceCheck || {}
   rows.push(pc.status === 'ok' ? { tone: 'ok', dir: 0, text: `Price confirmed by two sources (Google Finance ${fmtPrice(pc.gf)} · Finnhub ${fmtPrice(pc.fh)})` }
     : pc.status === 'warn' ? { tone: 'warn', dir: 0, gate: true, text: `Price sources disagree by ${Math.abs(pc.diff).toFixed(1)}% (Google Finance ${fmtPrice(pc.gf)} vs Finnhub ${fmtPrice(pc.fh)}) — check your broker before trading` }
     : { tone: 'na', dir: 0, text: 'Price from one source only' })
+  const ed = earningsDays(data.nextEarnings)
+  if (ed != null && ed <= 14) {
+    const e = data.nextEarnings, when = ed === 0 ? 'today' : ed === 1 ? 'tomorrow' : `in ${ed} days`
+    const hr = e.hour === 'bmo' ? ', before the open' : e.hour === 'amc' ? ', after the close' : ''
+    rows.push({ tone: ed <= 7 ? 'warn' : 'info', dir: 0, soon: ed <= 7,
+      text: `Earnings ${when} (${fmtDay(e.date)}${hr})${ed <= 7 ? ' — expect a big move either way' : ''}` })
+  }
   const mc = data.mcScore
   if (mc && mc.score != null && mc.incomplete) rows.push({ tone: 'warn', dir: 0, text: `MC Score incomplete right now (${mc.score.toFixed(1)}) — price history was busy; try again in a minute` })
+  // A low-confidence score (too little data behind it) is shown but never counted as a vote
+  else if (mc && mc.score != null && mc.confidence === 'Low') rows.push({ tone: 'na', dir: 0,
+    text: `MC Score ${mc.score.toFixed(1)} — too little data behind it${mc.coverage != null ? ` (${mc.coverage}%)` : ''}, not counted` })
   else if (mc && mc.score != null) {
     const s = mc.score, d = s >= 6.5 ? 1 : s <= 4 ? -1 : 0
     rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d,
@@ -761,9 +779,10 @@ export function decisionRows(data, board) {
     : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — routine for a company this size, often pre-planned` }
     : { tone: 'na', dir: 0, text: 'No insider trades in the last 90 days' })
   const pos = rows.filter(r => r.dir > 0).length, neg = rows.filter(r => r.dir < 0).length
+  const but = rows.some(r => r.soon) ? ' — but earnings are close' : ''
   const summary = rows.some(r => r.gate) ? { tone: 'warn', text: 'Verify the price first — the data sources disagree' }
-    : pos >= 2 && neg === 0 ? { tone: 'pos', text: `Signals agree: positive (${pos} checks point the same way)` }
-    : neg >= 2 && pos === 0 ? { tone: 'neg', text: `Signals agree: negative (${neg} checks point the same way)` }
+    : pos >= 2 && neg === 0 ? { tone: but ? 'warn' : 'pos', text: `Signals agree: positive (${pos} checks point the same way)${but}` }
+    : neg >= 2 && pos === 0 ? { tone: but ? 'warn' : 'neg', text: `Signals agree: negative (${neg} checks point the same way)${but}` }
     : pos && neg ? { tone: 'warn', text: 'Signals conflict — be cautious' }
     : { tone: 'na', text: 'No clear picture — not enough confirmed signals' }
   return { rows, summary }
