@@ -76,7 +76,7 @@ export default function App() {
     <div className="min-h-screen grid-bg scanline">
       <Header data={data} loading={loading} error={error} lastUpdated={lastUpdated} onRefresh={refresh} isMobile={isMobile} />
 
-      <main className={`max-w-[1600px] mx-auto ${isMobile ? 'px-3 py-3' : 'px-6 py-6'}`}>
+      <main className={`w-full ${isMobile ? 'px-3 py-3' : 'px-6 py-6'}`}>
         {/* Tabs */}
         <div className={`flex border-b border-white/8 mb-4 ${isMobile ? 'overflow-x-auto scrollbar-hide gap-0' : 'gap-1'}`}>
           {TABS.map(t => (
@@ -117,7 +117,7 @@ export default function App() {
       </main>
 
       {!isMobile && (
-        <footer className="max-w-[1600px] mx-auto px-6 py-4 border-t border-white/5 flex items-center justify-between flex-wrap gap-3">
+        <footer className="w-full px-6 py-4 border-t border-white/5 flex items-center justify-between flex-wrap gap-3">
           <div className="font-mono text-[10px] text-slate-700 uppercase tracking-[0.2em]">
             MC Portfolio · {lastUpdated ? lastUpdated.toLocaleString() : '—'}
           </div>
