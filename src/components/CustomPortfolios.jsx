@@ -769,9 +769,14 @@ export default function CustomPortfolios({ onAnalyze }) {
   const [syncing,      setSyncing]      = useState(false)
   const [syncStatus,   setSyncStatus]   = useState('') // 'saved' | 'error' | ''
   const [userId,  setUserId]  = useState(() => getSavedId())
+  const [loadTick, setLoadTick] = useState(0)
   const [pinInput, setPinInput] = useState('')
   const [pinError, setPinError] = useState('')
   const saveTimer = useRef(null)
+  // Saves always go to the CURRENT ID, and only after that ID's portfolios have loaded —
+  // otherwise a save could write an empty/other list over what is stored in the Sheet
+  const uidRef = useRef(userId); uidRef.current = userId
+  const loadedFor = useRef(null), firstLoad = useRef(true)
 
   const applyId = async (raw) => {
     const clean = raw.trim().toLowerCase().replace(/[^a-z0-9_]/g, '')
@@ -792,38 +797,45 @@ export default function CustomPortfolios({ onAnalyze }) {
     setPinError('')
   }
 
-  // Load from Sheet on mount
+  // Load from Sheet whenever the ID is set or changes
   useEffect(() => {
+    if (!userId) return
+    let alive = true
+    loadedFor.current = null
     setSyncing(true)
+    const localCopy = () => { try { return JSON.parse(localStorage.getItem('mc_custom_portfolios_v1') || '[]') } catch { return [] } }
     loadFromSheet(userId).then(data => {
-      if (data && data.length > 0) {
-        setPortfolios(data)
-        setActiveId(data[0].id)
-      } else {
-        // Fallback to localStorage for migration
-        try {
-          const local = JSON.parse(localStorage.getItem('mc_custom_portfolios_v1') || '[]')
-          if (local.length > 0) { setPortfolios(local); setActiveId(local[0].id) }
-        } catch {}
+      if (!alive || uidRef.current !== userId) return                 // an answer for an ID that is no longer active
+      if (data === null && !firstLoad.current) {                      // switched ID but the Sheet didn't answer: show nothing, save nothing, retry
+        setPortfolios([]); setActiveId(null); setSyncStatus('error'); setSyncing(false)
+        setTimeout(() => alive && setLoadTick(t => t + 1), 15000)
+        return
       }
-      setSyncing(false)
-    }).catch(() => {
-      try {
-        const local = JSON.parse(localStorage.getItem('mc_custom_portfolios_v1') || '[]')
-        if (local.length > 0) { setPortfolios(local); setActiveId(local[0].id) }
-      } catch {}
+      if (data && data.length > 0) { setPortfolios(data); setActiveId(data[0].id) }
+      else if (firstLoad.current) {                                   // this browser's copy (offline, or one-time migration) — as before
+        const local = localCopy()
+        setPortfolios(local); setActiveId(local.length ? local[0].id : null)
+      } else { setPortfolios([]); setActiveId(null) }                 // a different ID with nothing stored yet
+      if (data !== null) setSyncStatus('')
+      firstLoad.current = false
+      loadedFor.current = userId
       setSyncing(false)
     })
-  }, [])
+    return () => { alive = false }
+  }, [userId, loadTick])
 
   // Auto-save to Sheet with debounce
   const persistPortfolios = useCallback((updated) => {
     setPortfolios(updated)
-    localStorage.setItem('mc_custom_portfolios_v1', JSON.stringify(updated))
+    try { localStorage.setItem('mc_custom_portfolios_v1', JSON.stringify(updated)) } catch (e) {}   // a full/blocked browser store must not stop the cloud save
     clearTimeout(saveTimer.current)
+    const uid = uidRef.current
+    if (!uid) return                                                   // no ID yet → this browser only
     const attempt = async (retry) => {
+      if (uidRef.current !== uid) return                               // ID changed since → never write to the old one
+      if (loadedFor.current !== uid) { saveTimer.current = setTimeout(() => attempt(retry), 1500); return }   // wait for the load
       try {
-        await saveToSheet(userId, updated)
+        await saveToSheet(uid, updated)
         setSyncStatus('saved')
         setTimeout(() => setSyncStatus(''), 2000)
       } catch {
@@ -945,7 +957,7 @@ export default function CustomPortfolios({ onAnalyze }) {
           {syncing && <span className="font-mono text-[10px] text-slate-600 uppercase tracking-wider animate-pulse">Syncing…</span>}
           {syncStatus === 'saved' && <span className="font-mono text-[10px] text-terminal-green uppercase tracking-wider">✓ Saved</span>}
           {syncStatus === 'error' && <span title="Your changes are kept on this device and will be saved again automatically. If this persists, check your connection." className="font-mono text-[10px] text-terminal-red uppercase tracking-wider">⚠ Not saved to the cloud — kept on this device</span>}
-          <UserIdBadge userId={userId} onReset={() => { saveId(''); setUserId(null); setPortfolios([]) }} />
+          <UserIdBadge userId={userId} onReset={() => { clearTimeout(saveTimer.current); saveId(''); setUserId(null); setPortfolios([]); setActiveId(null) }} />
         </div>
       </div>
 
