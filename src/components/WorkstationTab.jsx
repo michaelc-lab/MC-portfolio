@@ -403,7 +403,7 @@ const MC_SCORE_TIP = `<b>MC Score (0–10)</b> — computed by a fixed-rule mode
   🟢 8–10 very favorable · 6.5–8 favorable odds<br/>
   🟡 4.5–6.5 neutral<br/>
   🔴 3–4.5 unfavorable · 0–3 very unfavorable odds<br/><br/>
-  <b>Evidence so far: not proven.</b> A 5-year test on your stocks was mixed — not statistically reliable, and the stocks were chosen with hindsight. The live track record is the real test.<br/><br/>
+  <b>Evidence so far:</b> a 5-year test on your stocks found high scores beat the S&amp;P 500 more often than average (73% vs 59% of months) but earned less on average — the biggest winners came from low scores. Not fully reliable: price factors only, stocks chosen with hindsight.<br/><br/>
   <i>Compared with approximate sector medians and adjusted for the market regime.</i>`
 
 const RANGE_TIP = `<b>Likely range</b> — how far the score could move if the data were slightly different.<br/>Narrow = factors agree. Wide = the stock is controversial: strong on some factors, weak on others.<br/><br/><i>Two stocks with the same score but different ranges are very different bets.</i>`
@@ -781,7 +781,7 @@ export function decisionRows(data, board, now = new Date()) {
     const s = mc.score, d = s >= 6.5 ? 1 : s <= 4 ? -1 : 0
     rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d,
       text: `${d > 0 ? 'Favorable odds' : d < 0 ? 'Unfavorable odds' : 'Neutral odds'} — MC Score ${s.toFixed(1)}${mc.universe && mc.universe.rank ? ` (#${mc.universe.rank} of ${mc.universe.n})` : ''}`,
-      sub: d !== 0 ? 'Not proven yet on your stocks' : null })
+      sub: d > 0 ? 'Historically: beat the S&P more often, but lower average returns' : d < 0 ? 'Historically: many of the biggest winners had low scores' : null })
   }
   const rdAge = board && !board.error && board.meta ? hoursAgo(board.meta.lastRun, now) : null
   if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
