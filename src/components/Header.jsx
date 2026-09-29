@@ -21,6 +21,25 @@ function useMarketStatus() {
   return status
 }
 
+// Minutes since the US open (9:30 New York) on a weekday, else null
+export function minutesSinceOpen(now = new Date()) {
+  const o = {}
+  new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now).forEach(p => { o[p.type] = p.value })
+  if (o.weekday === 'Sat' || o.weekday === 'Sun') return null
+  const m = (+o.hour % 24) * 60 + +o.minute
+  return m >= 570 && m < 960 ? m - 570 : null
+}
+// Google Finance can get stuck while the page still "updates": warn when no US price has changed for 40+ min
+// during the regular session (from 45 min after the open; the background check must itself be recent)
+export function pricesStuckMin(prices, now = new Date()) {
+  if (!prices || !prices.movedAt || !prices.seenAt) return null
+  const open = minutesSinceOpen(now)
+  if (open === null || open < 45) return null
+  if (now - new Date(prices.seenAt) > 40 * 60e3) return null
+  const m = Math.floor((now - new Date(prices.movedAt)) / 60e3)
+  return m >= 40 ? Math.min(m, open) : null
+}
+
 function MarketIndicator({ compact }) {
   const status = useMarketStatus()
   const cfg = {
@@ -58,6 +77,7 @@ export default function Header({ data, loading, error, lastUpdated, onRefresh, i
   const [, setTick] = useState(0)
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 30000); return () => clearInterval(id) }, [])
   const ageMin = lastUpdated ? Math.floor((Date.now() - new Date(lastUpdated).getTime()) / 60000) : null
+  const stuck = pricesStuckMin(data?.prices)
   const fx = data?.fx || {}
   const crypto = data?.crypto || {}
   const commodities = data?.commodities || {}
@@ -84,6 +104,8 @@ export default function Header({ data, loading, error, lastUpdated, onRefresh, i
             </div>
             {lastUpdated && <span data-testid="updated-ago" title="Refreshes by itself every 5 min · Google Finance prices can be up to 20 min delayed"
               className={`font-mono text-[10px] ${ageMin > 15 ? 'text-terminal-amber' : 'text-slate-500'}`}>{ageMin < 1 ? 'just now' : `${ageMin} min ago`}</span>}
+            {stuck != null && <span data-testid="prices-stuck" title={`No price has changed for ${stuck} min during market hours — Google Finance may be stuck. Check your broker before trading.`}
+              className="font-mono text-[10px] text-terminal-amber cursor-help">⚠ stuck?</span>}
             <button onClick={onRefresh} disabled={loading}
               className="p-1.5 rounded border border-electric-500/20 bg-electric-500/5 text-electric-400 disabled:opacity-40">
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
@@ -137,6 +159,9 @@ export default function Header({ data, loading, error, lastUpdated, onRefresh, i
           {lastUpdated && <span title={'Last refreshed ' + formatTime(lastUpdated) + ' · refreshes by itself every 5 min · Google Finance prices can be up to 20 min delayed'}
             className={`font-mono text-[11px] ${ageMin > 15 ? 'text-terminal-amber' : 'text-slate-600'}`} data-testid="updated-ago">
             {ageMin === null ? '' : ageMin < 1 ? 'Updated just now' : `Updated ${ageMin} min ago`}{ageMin > 15 ? ' — may be outdated' : ''}
+          </span>}
+          {stuck != null && <span data-testid="prices-stuck" title="Google Finance may be stuck — check your broker before trading" className="font-mono text-[11px] text-terminal-amber">
+            ⚠ Prices haven't moved for {stuck} min
           </span>}
           <button onClick={onRefresh} disabled={loading}
             className="flex items-center gap-2 px-3 py-1.5 rounded border border-electric-500/20 bg-electric-500/5 text-electric-400 text-[11px] font-mono uppercase tracking-wider hover:border-electric-500/40 hover:bg-electric-500/10 transition-all disabled:opacity-40">
