@@ -204,10 +204,15 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze, isMob
         </table>
       </div>
       {(() => {
-        const ok = rows.filter(r => r.pxCheck && r.pxCheck.status === 'ok').length, warn = rows.filter(r => r.pxCheck && r.pxCheck.status === 'warn').length
-        return (ok + warn) > 0 && (
+        const n = st => rows.filter(r => r.pxCheck && r.pxCheck.status === st).length
+        const ok = n('ok'), warn = n('warn'), again = n('recheck'), old = n('stale'), un = n('unchecked')
+        return (ok + warn + again + old) > 0 && (
           <div className="font-mono text-[10px] text-slate-600 mt-2 px-1" data-testid="px-footer">
-            Prices from Google Finance (can be up to 20 min delayed) · cross-checked with Finnhub: {ok} agree{warn > 0 && <span className="text-terminal-amber"> · {warn} disagree ⚠</span>}
+            Prices from Google Finance (can be up to 20 min delayed) · cross-checked with Finnhub: {ok} agree
+            {again > 0 && <span> · {again} being re-checked</span>}
+            {warn > 0 && <span className="text-terminal-amber"> · {warn} disagree ⚠</span>}
+            {old > 0 && <span> · {old} not checked for 6 h+</span>}
+            {un > 0 && <span> · {un} non-US not checked</span>}
           </div>
         )
       })()}
