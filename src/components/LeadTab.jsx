@@ -177,6 +177,7 @@ function MoverTable({ title, rows, meta, useWeek = false, type = 'gain' }) {
 function UpcomingEarnings() {
   const [earnings, setEarnings] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [showAll, setShowAll] = useState(false)
   const fetched = useRef(false)
 
   useEffect(() => {
@@ -222,7 +223,7 @@ function UpcomingEarnings() {
             </tr>
           </thead>
           <tbody>
-            {earnings.map((e, i) => {
+            {(showAll ? earnings : earnings.slice(0, 10)).map((e, i) => {
               const days = daysUntil(e.date)
               return (
                 <tr key={i}>
@@ -234,18 +235,23 @@ function UpcomingEarnings() {
                     </span>
                   </td>
                   <td>
-                    {e.hour && (
+                    {(e.hour === 'bmo' || e.hour === 'amc') && (
                       <span className={`font-mono text-[10px] px-2 py-0.5 rounded border ${e.hour === 'bmo' ? 'border-blue-500/30 text-blue-400 bg-blue-500/10' : 'border-purple-500/30 text-purple-400 bg-purple-500/10'}`}>
                         {e.hour === 'bmo' ? 'BMO' : 'AMC'}
                       </span>
                     )}
                   </td>
-                  <td className="text-right"><span className="font-mono text-[12px] text-slate-400">{e.estimate != null ? '$' + e.estimate.toFixed(2) : '—'}</span></td>
+                  <td className="text-right"><span className="font-mono text-[12px] text-slate-400">{typeof e.estimate === 'number' ? (e.estimate < 0 ? '-$' : '$') + Math.abs(e.estimate).toFixed(2) : '—'}</span></td>
                 </tr>
               )
             })}
           </tbody>
         </table>
+      )}
+      {earnings?.length > 10 && (
+        <button onClick={() => setShowAll(v => !v)} className="w-full px-4 py-2 text-left text-[12px] text-slate-500 hover:text-slate-300 border-t border-white/5">
+          {showAll ? 'Show fewer' : `+ ${earnings.length - 10} more`}
+        </button>
       )}
     </div>
   )
