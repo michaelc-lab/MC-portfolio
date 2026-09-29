@@ -50,6 +50,24 @@ export async function saveToSheet(userId, portfolios, send = jsonp) {
   }
 }
 
+// ── Lots & splits ─────────────────────────────────────────────
+export function mergeLot(old, add) {
+  const lots = (old.lots && old.lots.length ? old.lots : [{ qty: old.qty, buyPrice: old.buyPrice, buyDate: old.buyDate || '' }])
+    .concat([{ qty: add.qty, buyPrice: add.buyPrice, buyDate: add.buyDate || '' }])
+  const qty = lots.reduce((a, l) => a + l.qty, 0)
+  const dates = lots.map(l => l.buyDate).filter(Boolean).sort()
+  return { ...old, qty, buyPrice: lots.reduce((a, l) => a + l.qty * l.buyPrice, 0) / qty, buyDate: dates.length === lots.length ? dates[0] : '', lots }
+}
+// r = shares per old share (10 for a 10:1 split); only lots bought before the split change
+export function applySplitToPosition(p, split) {
+  const adj = l => (l.buyDate && l.buyDate >= split.date) ? l : { ...l, qty: l.qty * split.r, buyPrice: l.buyPrice / split.r }
+  if (p.lots && p.lots.length > 1) {
+    const lots = p.lots.map(adj), qty = lots.reduce((a, l) => a + l.qty, 0)
+    return { ...p, lots, qty, buyPrice: lots.reduce((a, l) => a + l.qty * l.buyPrice, 0) / qty, splitAdj: split.date }
+  }
+  return { ...p, ...adj({ qty: p.qty, buyPrice: p.buyPrice, buyDate: p.buyDate }), buyDate: p.buyDate, splitAdj: split.date }
+}
+
 // ── Quote fetcher ─────────────────────────────────────────────
 const YEAR = new Date().getFullYear()
 
@@ -432,15 +450,22 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
     const pnlPct       = pnlAbs != null && cost ? (pnlAbs / cost) * 100 : null
     // YTD start price: your buy price if bought this year, otherwise the last close of the previous year.
     // No Dec 31 price (listed this year, or a data gap) and no 2026 purchase date → no YTD, never a guess.
-    const boughtThisYear = !!(p.buyDate && Number(p.buyDate.slice(0, 4)) === YEAR)
+    // Several purchases (lots): each lot starts from its own buy price if bought this year, else from the Dec 31 close
+    const lots           = p.lots && p.lots.length > 1 ? p.lots : [{ qty: p.qty, buyPrice: p.buyPrice, buyDate: p.buyDate }]
+    const thisYear       = l => !!(l.buyDate && Number(String(l.buyDate).slice(0, 4)) === YEAR)
+    const boughtThisYear = lots.every(thisYear)
     const noYearEnd      = !!(q && q.price != null && q.ytdBase == null)
-    const ytdStart       = boughtThisYear ? p.buyPrice : (q?.ytdBase ?? null)
-    const ytdFrom        = boughtThisYear ? `your buy price (bought ${p.buyDate})` : q?.ytdBase ? `the Dec 31 close ${fmtPrice(q.ytdBase)}` : null
+    const startVal       = lots.every(l => thisYear(l) || q?.ytdBase) ? lots.reduce((a, l) => a + l.qty * (thisYear(l) ? l.buyPrice : q.ytdBase), 0) : null
+    const ytdStart       = startVal != null && p.qty ? startVal / p.qty : null
+    const ytdFrom        = lots.length > 1 ? (startVal != null ? `${lots.length} purchases: ${lots.map(l => thisYear(l) ? `${l.qty} from your buy price` : `${l.qty} from the Dec 31 close`).join(', ')}` : null)
+      : boughtThisYear ? `your buy price (bought ${p.buyDate})` : q?.ytdBase ? `the Dec 31 close ${fmtPrice(q.ytdBase)}` : null
     const ytdAbs         = currentPrice != null && ytdStart && fx != null ? (currentPrice - ytdStart) * p.qty * fx : null
     const ytdPct         = currentPrice != null && ytdStart ? (currentPrice / ytdStart - 1) * 100 : null
-    const assumed        = !p.buyDate && q?.ytdBase != null
+    const assumed        = lots.some(l => !l.buyDate) && q?.ytdBase != null
     const noStart        = noYearEnd && !boughtThisYear
-    return { ...p, cur, fx, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed, noStart }
+    // a split after the purchase (or with no purchase date) → quantity and buy price need adjusting
+    const splitDue       = q?.split && p.splitAdj !== q.split.date && !(p.buyDate && lots.every(l => l.buyDate && l.buyDate >= q.split.date)) ? q.split : null
+    return { ...p, cur, fx, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed, noStart, splitDue }
   })
 
   const sorted = [...rows].sort((a, b) => {
@@ -551,9 +576,15 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                 return (
                   <tr key={r.ticker} className="group">
                     <td style={{...tdStyle('center'), color:'#334155', fontSize:'11px'}}>{idx + 1}</td>
-                    <td style={tdStyle('left')}><span style={{fontWeight:'700',fontSize:'13px',color:'#7dd3fc'}}>{r.ticker}</span></td>
-                    <td style={tdStyle()}><span style={{color:'#cbd5e1'}}>{r.qty}</span></td>
-                    <td style={tdStyle()}><span style={{color:'#94a3b8'}}>{fmtMoney(r.buyPrice, r.cur)}</span></td>
+                    <td style={tdStyle('left')}><span style={{fontWeight:'700',fontSize:'13px',color:'#7dd3fc'}}>{r.ticker}</span>
+                      {r.splitDue && <button data-testid="split-adjust" onClick={() => onUpdate(applySplitToPosition(positions.find(x => x.ticker === r.ticker), r.splitDue))}
+                        title="Your quantity and buy price are from before the split. Tap to convert them (value and P&L stay the same)."
+                        style={{display:'block',marginTop:2,fontSize:'10px',color:'#ffb800',background:'none',border:'none',padding:0,cursor:'pointer',textAlign:'left'}}>
+                        ⚠ {r.splitDue.r >= 1 ? `${r.splitDue.r}:1 split` : `1:${Math.round(1 / r.splitDue.r)} reverse split`} on {r.splitDue.date} — adjust
+                      </button>}
+                    </td>
+                    <td style={tdStyle()} title={r.lots && r.lots.length > 1 ? r.lots.map(l => `${l.qty} @ ${fmtMoney(l.buyPrice, r.cur)}${l.buyDate ? ' on ' + l.buyDate : ''}`).join(' · ') : undefined}><span style={{color:'#cbd5e1'}}>{r.qty}</span></td>
+                    <td style={tdStyle()} title={r.lots && r.lots.length > 1 ? `Average of ${r.lots.length} purchases` : undefined}><span style={{color:'#94a3b8'}}>{fmtMoney(r.buyPrice, r.cur)}</span></td>
                     <td style={tdStyle()}>
                       {isLoading ? <span style={{color:'#475569',fontSize:'11px'}}>…</span>
                         : r.currentPrice != null ? <span style={{fontWeight:'600',color:'#f1f5f9'}}>{fmtMoney(r.currentPrice, r.cur)}{quotes[r.ticker]?.pxCheck?.status === 'warn' && <span title={`Price sources disagree (Finnhub ${fmtPrice(quotes[r.ticker].pxCheck.fh)}, ${quotes[r.ticker].pxCheck.diff}%) — check your broker`} style={{color:'#ffb800',marginLeft:4,cursor:'help'}}>⚠</span>}</span>
@@ -866,15 +897,24 @@ export default function CustomPortfolios({ onAnalyze }) {
         ? { ...p, positions: [...p.positions, { ticker, addedAt: Date.now() }] } : p
     ))
   }
+  // Adding a ticker you already hold = another purchase: merged into one position (average cost), lots kept for YTD
   const handleAddInvestment = (position) => {
-    persistPortfolios(portfolios.map(p =>
-      p.id === activeId && !p.positions.find(pos => pos.ticker === position.ticker)
-        ? { ...p, positions: [...p.positions, position] } : p
-    ))
+    persistPortfolios(portfolios.map(p => {
+      if (p.id !== activeId) return p
+      const old = p.positions.find(pos => pos.ticker === position.ticker)
+      if (!old) return { ...p, positions: [...p.positions, position] }
+      return { ...p, positions: p.positions.map(pos => pos === old ? mergeLot(old, position) : pos) }
+    }))
   }
   const handleUpdateInvestment = (position) => {
     persistPortfolios(portfolios.map(p =>
-      p.id === activeId ? { ...p, positions: p.positions.map(pos => pos.ticker === position.ticker ? { ...pos, ...position, buyDate: position.buyDate } : pos) } : p
+      p.id === activeId ? { ...p, positions: p.positions.map(pos => {
+        if (pos.ticker !== position.ticker) return pos
+        const next = { ...pos, ...position, buyDate: position.buyDate }
+        // a manual edit of quantity / price / date replaces the purchase history with what you typed
+        if (!position.lots && (position.qty !== pos.qty || position.buyPrice !== pos.buyPrice || position.buyDate !== pos.buyDate)) delete next.lots
+        return next
+      }) } : p
     ))
   }
   const handleRemove = (ticker) => {
