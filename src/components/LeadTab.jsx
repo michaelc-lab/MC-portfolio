@@ -178,14 +178,21 @@ function UpcomingEarnings() {
   const [earnings, setEarnings] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showAll, setShowAll] = useState(false)
+  const [failed, setFailed] = useState(false), [missing, setMissing] = useState(0)
   const fetched = useRef(false)
 
   useEffect(() => {
     if (fetched.current) return
     fetched.current = true
-    jsonp(`${APPS_SCRIPT_URL}?action=getUpcomingEarnings`)
-      .then(data => { setEarnings(Array.isArray(data) ? data : []); setLoading(false) })
-      .catch(() => { setEarnings([]); setLoading(false) })
+    // a failure must never read as "nothing scheduled"
+    jsonp(`${APPS_SCRIPT_URL}?action=getUpcomingEarningsV2`)
+      .then(data => {
+        if (Array.isArray(data)) setEarnings(data)                    // older backend
+        else if (data && Array.isArray(data.list)) { setEarnings(data.list); setMissing(Number(data.missingDays) || 0) }
+        else { setEarnings([]); setFailed(true) }
+        setLoading(false)
+      })
+      .catch(() => { setEarnings([]); setFailed(true); setLoading(false) })
   }, [])
 
   const formatDate = (d) => {
@@ -209,6 +216,10 @@ function UpcomingEarnings() {
       </div>
       {loading ? (
         <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider animate-pulse">Loading…</div>
+      ) : failed ? (
+        <div className="p-6 text-center text-[12px] text-terminal-amber" data-testid="earn-failed">Earnings calendar unavailable right now — dates unknown, check before trading</div>
+      ) : !earnings?.length && missing ? (
+        <div className="p-6 text-center text-[12px] text-terminal-amber">{missing} of 31 days couldn't be loaded — dates unknown, check before trading</div>
       ) : !earnings?.length ? (
         <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider">No earnings scheduled in the next 30 days</div>
       ) : (
@@ -247,6 +258,9 @@ function UpcomingEarnings() {
             })}
           </tbody>
         </table>
+      )}
+      {!failed && missing > 0 && earnings?.length > 0 && (
+        <div className="px-4 py-2 text-[11px] text-terminal-amber border-t border-white/5" data-testid="earn-missing">{missing} of 31 days couldn't be loaded — some reports may be missing</div>
       )}
       {earnings?.length > 10 && (
         <button onClick={() => setShowAll(v => !v)} className="w-full px-4 py-2 text-left text-[12px] text-slate-500 hover:text-slate-300 border-t border-white/5">
@@ -469,9 +483,10 @@ function NewsRadar({ onAnalyze, isMobile, names }) {
               {track.buckets.concat(track.sectors && track.sectors.n ? [{ strength: 'Sector pulse', ...track.sectors }] : [], track.ai && track.ai.n ? [{ strength: 'AI-inferred', ...track.ai }] : []).filter(b => b.n).map(b => (
                 <div key={b.strength} className="flex justify-between gap-3 flex-wrap text-slate-400">
                   <span>{b.strength === 'High' ? 'Strong signals' : b.strength === 'Medium' ? 'Moderate signals' : b.strength === 'Low' ? 'Weak signals' : b.strength}</span>
-                  <span><span className="text-slate-200">{b.hitRate == null ? '—' : b.hitRate.toFixed(0) + '%'}</span> moved as expected
+                  {/* a hit rate from a handful of signals is noise — show the count only until there are 10 */}
+                  {b.n < 10 ? <span className="text-slate-500">{b.n} signal{b.n === 1 ? '' : 's'} so far — too few to judge (needs 10)</span> : <span><span className="text-slate-200">{b.hitRate == null ? '—' : b.hitRate.toFixed(0) + '%'}</span> moved as expected
                     {b.beatMarketRate != null && <> · <span className="text-slate-200">{b.beatMarketRate.toFixed(0)}%</span> beat the market</>}
-                    <span className="text-slate-600"> · {b.n} signals · avg {b.avgMove == null ? '—' : (b.avgMove >= 0 ? '+' : '') + b.avgMove.toFixed(1) + '%'}</span></span>
+                    <span className="text-slate-600"> · {b.n} signals · avg {b.avgMove == null ? '—' : (b.avgMove >= 0 ? '+' : '') + b.avgMove.toFixed(1) + '%'}</span></span>}
                 </div>
               ))}
               {track.baseline && track.baseline.n > 0 && (
@@ -485,9 +500,10 @@ function NewsRadar({ onAnalyze, isMobile, names }) {
           {track && !track.error && track.feedback && track.feedback.all.n > 0 && (
             <div className="mt-3 pt-3 border-t border-white/5 text-[12px] text-slate-400">
               Your ratings: <span className="text-slate-200">{track.feedback.all.n}</span> rated
+              {track.feedback.all.n < 10 ? <span className="text-slate-500"> — accuracy shown from 10 ratings</span> : <>
               {track.feedback.all.accuracy != null && <> · <span className="text-slate-200">{track.feedback.all.accuracy.toFixed(0)}%</span> right</>}
-              {track.feedback.named.accuracy != null && <span className="text-slate-600"> · named in news {track.feedback.named.accuracy.toFixed(0)}%</span>}
-              {track.feedback.ai.accuracy != null && <span className="text-slate-600"> · AI-inferred {track.feedback.ai.accuracy.toFixed(0)}%</span>}
+              {track.feedback.named.accuracy != null && track.feedback.named.n >= 10 && <span className="text-slate-600"> · named in news {track.feedback.named.accuracy.toFixed(0)}%</span>}
+              {track.feedback.ai.accuracy != null && track.feedback.ai.n >= 10 && <span className="text-slate-600"> · AI-inferred {track.feedback.ai.accuracy.toFixed(0)}%</span>}</>}
             </div>
           )}
         </div>
@@ -496,7 +512,9 @@ function NewsRadar({ onAnalyze, isMobile, names }) {
       {!data && !err && <div className="py-8 text-center text-[12px] text-slate-500 animate-pulse">Reading the news…</div>}
       {err && <div className="py-8 text-center text-[12px] text-terminal-red">{err}</div>}
       {data && !meta && <div className="py-8 text-center text-[12px] text-slate-500">Not started yet — run installNewsRadarTrigger once in Apps Script.</div>}
-      {data && meta && !sigs.length && <div className="py-8 text-center text-[13px] text-slate-500">A quiet news day — nothing worth your attention right now.</div>}
+      {data && meta && !sigs.length && (meta.headlines === 0
+        ? <div className="py-8 text-center text-[13px] text-terminal-amber">No headlines received — the news feeds may be down. This is not a quiet day.</div>
+        : <div className="py-8 text-center text-[13px] text-slate-500">A quiet news day — nothing worth your attention right now.</div>)}
 
       {top.length > 0 && (
         <>
