@@ -51,6 +51,14 @@ export async function saveToSheet(userId, portfolios, send = jsonp) {
 }
 
 // ── Lots & splits ─────────────────────────────────────────────
+// Saving an edited position: a real change of quantity / price / date replaces the purchase history with what you
+// typed; saving without changes (e.g. just opening ✎ and pressing save) keeps it
+export function updatePosition(pos, position) {
+  const next = { ...pos, ...position, buyDate: position.buyDate }
+  const same = Number(position.qty) === Number(pos.qty) && Math.abs(Number(position.buyPrice) - Number(pos.buyPrice)) < 1e-6 && (position.buyDate || '') === (pos.buyDate || '')
+  if (!position.lots && !same) delete next.lots
+  return next
+}
 export function mergeLot(old, add) {
   const lots = (old.lots && old.lots.length ? old.lots : [{ qty: old.qty, buyPrice: old.buyPrice, buyDate: old.buyDate || '' }])
     .concat([{ qty: add.qty, buyPrice: add.buyPrice, buyDate: add.buyDate || '' }])
@@ -444,8 +452,11 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
     // prices are in the stock's own currency; money columns and totals are converted to USD at today's rate
     const cur          = q?.currency || 'USD'
     const fx           = cur === 'USD' ? 1 : (q?.fxToUsd ?? null)
+    // while a split is being confirmed, or a confirmed split isn't adjusted yet, quantity and price don't match:
+    // show "—" and keep the row out of the totals instead of a fake −90%
+    const hold         = !!(q?.splitPending || (q?.split && p.splitAdj !== q.split.date && !(p.buyDate && (p.lots && p.lots.length > 1 ? p.lots : [p]).every(l => l.buyDate && l.buyDate >= q.split.date))))
     const cost         = fx != null ? p.buyPrice * p.qty * fx : null
-    const value        = currentPrice != null && fx != null ? currentPrice * p.qty * fx : null
+    const value        = currentPrice != null && fx != null && !hold ? currentPrice * p.qty * fx : null
     const pnlAbs       = value != null && cost != null ? value - cost : null
     const pnlPct       = pnlAbs != null && cost ? (pnlAbs / cost) * 100 : null
     // YTD start price: your buy price if bought this year, otherwise the last close of the previous year.
@@ -459,13 +470,13 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
     const ytdStart       = startVal != null && p.qty ? startVal / p.qty : null
     const ytdFrom        = lots.length > 1 ? (startVal != null ? `${lots.length} purchases: ${lots.map(l => thisYear(l) ? `${l.qty} from your buy price` : `${l.qty} from the Dec 31 close`).join(', ')}` : null)
       : boughtThisYear ? `your buy price (bought ${p.buyDate})` : q?.ytdBase ? `the Dec 31 close ${fmtPrice(q.ytdBase)}` : null
-    const ytdAbs         = currentPrice != null && ytdStart && fx != null ? (currentPrice - ytdStart) * p.qty * fx : null
-    const ytdPct         = currentPrice != null && ytdStart ? (currentPrice / ytdStart - 1) * 100 : null
+    const ytdAbs         = currentPrice != null && ytdStart && fx != null && !hold ? (currentPrice - ytdStart) * p.qty * fx : null
+    const ytdPct         = currentPrice != null && ytdStart && !hold ? (currentPrice / ytdStart - 1) * 100 : null
     const assumed        = lots.some(l => !l.buyDate) && q?.ytdBase != null
     const noStart        = noYearEnd && !boughtThisYear
     // a split after the purchase (or with no purchase date) → quantity and buy price need adjusting
     const splitDue       = q?.split && p.splitAdj !== q.split.date && !(p.buyDate && lots.every(l => l.buyDate && l.buyDate >= q.split.date)) ? q.split : null
-    return { ...p, cur, fx, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed, noStart, splitDue }
+    return { ...p, cur, fx, currentPrice, cost, value, pnlAbs, pnlPct, dayChangePct: q?.dayChangePct ?? null, ytdStart, ytdFrom, ytdAbs, ytdPct, assumed, noStart, splitDue, splitPending: !!q?.splitPending }
   })
 
   const sorted = [...rows].sort((a, b) => {
@@ -582,6 +593,8 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                         style={{display:'block',marginTop:2,fontSize:'10px',color:'#ffb800',background:'none',border:'none',padding:0,cursor:'pointer',textAlign:'left'}}>
                         ⚠ {r.splitDue.r >= 1 ? `${r.splitDue.r}:1 split` : `1:${Math.round(1 / r.splitDue.r)} reverse split`} on {r.splitDue.date} — adjust
                       </button>}
+                      {!r.splitDue && r.splitPending && <span data-testid="split-pending" title="The price jumped by a split-like ratio; it is confirmed on the next check (≈15 min). Until then this row is left out of the totals."
+                        style={{display:'block',marginTop:2,fontSize:'10px',color:'#ffb800',cursor:'help'}}>⚠ possible split — checking</span>}
                     </td>
                     <td style={tdStyle()} title={r.lots && r.lots.length > 1 ? r.lots.map(l => `${l.qty} @ ${fmtMoney(l.buyPrice, r.cur)}${l.buyDate ? ' on ' + l.buyDate : ''}`).join(' · ') : undefined}><span style={{color:'#cbd5e1'}}>{r.qty}</span></td>
                     <td style={tdStyle()} title={r.lots && r.lots.length > 1 ? `Average of ${r.lots.length} purchases` : undefined}><span style={{color:'#94a3b8'}}>{fmtMoney(r.buyPrice, r.cur)}</span></td>
@@ -673,7 +686,10 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
         </div>
       )}
       {showModal && <AddPositionModal onClose={() => setShowModal(false)} onAdd={(pos) => { onAdd(pos); setShowModal(false) }} />}
-      {editPos && <AddPositionModal initial={editPos} onClose={() => setEditPos(null)} onAdd={(pos) => { onUpdate(pos); setEditPos(null) }} />}
+      {editPos && <AddPositionModal initial={editPos} onClose={() => setEditPos(null)} onAdd={(pos) => {
+        const due = rows.find(x => x.ticker === pos.ticker)?.splitDue
+        const changed = Number(pos.qty) !== Number(editPos.qty) || Math.abs(Number(pos.buyPrice) - Number(editPos.buyPrice)) > 1e-9
+        onUpdate(due && changed ? { ...pos, splitAdj: due.date } : pos); setEditPos(null) }} />}
     </div>
   )
 }
@@ -908,13 +924,7 @@ export default function CustomPortfolios({ onAnalyze }) {
   }
   const handleUpdateInvestment = (position) => {
     persistPortfolios(portfolios.map(p =>
-      p.id === activeId ? { ...p, positions: p.positions.map(pos => {
-        if (pos.ticker !== position.ticker) return pos
-        const next = { ...pos, ...position, buyDate: position.buyDate }
-        // a manual edit of quantity / price / date replaces the purchase history with what you typed
-        if (!position.lots && (position.qty !== pos.qty || position.buyPrice !== pos.buyPrice || position.buyDate !== pos.buyDate)) delete next.lots
-        return next
-      }) } : p
+      p.id === activeId ? { ...p, positions: p.positions.map(pos => pos.ticker !== position.ticker ? pos : updatePosition(pos, position)) } : p
     ))
   }
   const handleRemove = (ticker) => {
