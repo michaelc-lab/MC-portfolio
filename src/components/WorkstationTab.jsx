@@ -772,28 +772,37 @@ export function decisionRows(data, board, now = new Date()) {
     : { tone: 'na', dir: 0, text: 'Price from one source only' })
   const er = earningsRow(data.nextEarnings, now)
   if (er) rows.push(er)
+  // the calendar didn't answer: say so — never let "no row" read as "no earnings soon"
+  else if (data.earningsOn === false) rows.push({ tone: 'warn', dir: 0, soon: 'unknown', text: "Earnings date unknown — the calendar didn't answer. Check before trading" })
   const mc = data.mcScore
-  if (mc && mc.score != null && mc.incomplete) rows.push({ tone: 'warn', dir: 0, text: `MC Score incomplete right now (${mc.score.toFixed(1)}) — price history was busy; try again in a minute` })
+  let mcCounted = false
+  if (mc && mc.score != null && mc.incomplete) rows.push({ tone: 'warn', dir: 0, text: `MC Score incomplete right now (${mc.score.toFixed(1)}) — price history unavailable; try again in a minute` })
   // A low-confidence score (too little data behind it) is shown but never counted as a vote
   else if (mc && mc.score != null && mc.confidence === 'Low') rows.push({ tone: 'na', dir: 0,
     text: `MC Score ${mc.score.toFixed(1)} — too little data behind it${mc.coverage != null ? ` (${mc.coverage}%)` : ''}, not counted` })
   else if (mc && mc.score != null) {
-    const s = mc.score, d = s >= 6.5 ? 1 : s <= 4 ? -1 : 0
-    rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d,
-      text: `${d > 0 ? 'Favorable odds' : d < 0 ? 'Unfavorable odds' : 'Neutral odds'} — MC Score ${s.toFixed(1)}${mc.universe && mc.universe.rank ? ` (#${mc.universe.rank} of ${mc.universe.n})` : ''}`,
-      sub: d > 0 ? 'Historically: beat the S&P more often, but lower average returns' : d < 0 ? 'Historically: many of the biggest winners had low scores' : null })
+    // same thresholds as the score's own label (6.5 / 4.5). A LOW score never votes negative: in your 5-year test the
+    // lowest scores had the highest average returns — so it is shown, not counted against the stock
+    const s = mc.score, band = s >= 6.5 ? 1 : s < 4.5 ? -1 : 0, d = band > 0 ? 1 : 0
+    mcCounted = true
+    rows.push({ tone: d > 0 ? 'pos' : 'na', dir: d,
+      text: `${band > 0 ? 'Favorable odds' : band < 0 ? 'Unfavorable odds' : 'Neutral odds'} — MC Score ${s.toFixed(1)}${mc.universe && mc.universe.rank ? ` (#${mc.universe.rank} of ${mc.universe.n})` : ''}${band < 0 ? ' — not counted as a negative' : ''}`,
+      sub: band > 0 ? 'Historically: beat the S&P more often, but lower average returns' : band < 0 ? 'Historically: many of the biggest winners had low scores' : null })
   }
   const rdAge = board && !board.error && board.meta ? hoursAgo(board.meta.lastRun, now) : null
   if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
   else if (board.error) rows.push({ tone: 'na', dir: 0, text: 'News unavailable right now' })
   else if (rdAge != null && rdAge > 2) rows.push({ tone: 'na', dir: 0, text: `News Radar last updated ${Math.round(rdAge)} h ago — news not counted` })
+  else if (board.meta && board.meta.headlines === 0) rows.push({ tone: 'na', dir: 0, text: 'News unavailable — the radar received no headlines (feeds may be down)' })
   else {
     const sig = (board.signals || []).find(x => x.ticker === data.ticker)
     if (!sig || !sig.dir) rows.push({ tone: 'na', dir: 0, text: 'Not on the News Radar (last 2 days)' })
     else {
       // Only news the radar rates Medium or High, not AI-only, and not contradicted by the price, votes
-      const weak = sig.strength === 'Low', d = sig.against || sig.aiOnly || weak ? 0 : sig.dir
-      const why = sig.aiOnly ? ' — inferred by AI, not counted' : weak ? ' — weak signal, not counted' : ` — ${String(sig.strength || 'medium').toLowerCase()} signal on the News Radar`
+      // …and news the price has already reacted to ("late") is priced in: shown, not counted
+      const weak = sig.strength === 'Low', d = sig.against || sig.aiOnly || weak || sig.late ? 0 : sig.dir
+      const why = sig.aiOnly ? ' — inferred by AI, not counted' : weak ? ' — weak signal, not counted'
+        : sig.late ? ' — the price has already reacted, not counted' : ` — ${String(sig.strength || 'medium').toLowerCase()} signal on the News Radar`
       rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d, url: sig.url,
         text: `${sig.dir > 0 ? 'Positive' : 'Negative'} news${why}${sig.against ? ', but the stock is moving against it — not counted' : ''}`,
         sub: sig.sec ? `The company also filed ${/^8/.test(sig.sec.form) ? 'an' : 'a'} ${sig.sec.form} on ${sig.sec.date} — open it to see if it's related` : null, subUrl: sig.sec ? sig.sec.url : null })
@@ -815,13 +824,17 @@ export function decisionRows(data, board, now = new Date()) {
   const sold180 = (data.insiders || []).filter(x => x.transactionCode === 'S' && new Date(x.date || x.transactionDate || x.filingDate).getTime() >= since180)
     .reduce((s, x) => s + Math.abs(Number(x.value) || 0), 0)
   const sellPct = mcapM ? sold180 / (mcapM * 1e6) * 100 : null
-  rows.push(buys.length ? { tone: 'pos', dir: 1, text: `Insiders bought shares with their own money (${buys.length} purchase${buys.length === 1 ? '' : 's'} in 90 days)` }
-    : sellPct !== null && sellPct >= 1 ? { tone: 'neg', dir: -1, text: `Insiders sold ~${sellPct.toFixed(1)}% of the company in 6 months — unusually large` }
+  // Insider trades are already inside the MC Score (Smart money). When the score is counted, they are shown but don't vote
+  // a second time; without a counted score they vote on their own
+  const inMc = mcCounted ? ' — already part of the MC Score' : ''
+  rows.push(buys.length ? { tone: mcCounted ? 'info' : 'pos', dir: mcCounted ? 0 : 1, text: `Insiders bought shares with their own money (${buys.length} purchase${buys.length === 1 ? '' : 's'} in 90 days)${inMc}` }
+    : sellPct !== null && sellPct >= 1 ? { tone: mcCounted ? 'info' : 'neg', dir: mcCounted ? 0 : -1, text: `Insiders sold ~${sellPct.toFixed(1)}% of the company in 6 months — unusually large${inMc}` }
     : sellPct !== null && sellPct >= 0.25 ? { tone: 'na', dir: 0, text: `Insiders sold ~${sellPct.toFixed(2)}% of the company in 6 months — notable, but not decisive` }
     : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — routine for a company this size, often pre-planned` }
     : { tone: 'na', dir: 0, text: 'No insider trades in the last 90 days' })
   const pos = rows.filter(r => r.dir > 0).length, neg = rows.filter(r => r.dir < 0).length
-  const but = rows.some(r => r.soon === 'just') ? ' — but earnings just came out' : rows.some(r => r.soon === 'close') ? ' — but earnings are close' : ''
+  const but = rows.some(r => r.soon === 'just') ? ' — but earnings just came out' : rows.some(r => r.soon === 'close') ? ' — but earnings are close'
+    : rows.some(r => r.soon === 'unknown') ? ' — but the earnings date is unknown' : ''
   const summary = rows.some(r => r.gate) ? { tone: 'warn', text: 'Verify the price first — the data sources disagree' }
     : pos >= 2 && neg === 0 ? { tone: but ? 'warn' : 'pos', text: `Signals agree: positive (${pos} checks point the same way)${but}` }
     : neg >= 2 && pos === 0 ? { tone: but ? 'warn' : 'neg', text: `Signals agree: negative (${neg} checks point the same way)${but}` }
