@@ -28,13 +28,16 @@ function getSavedId() {
 async function loadFromSheet(userId) {
   try {
     const d = await jsonp(`${APPS_SCRIPT_URL}?action=getCustomPortfolios&userId=${encodeURIComponent(userId)}`)
-    return Array.isArray(d?.portfolios) ? d.portfolios : []
+    // a backend error is a FAILED load (null), never "you have no portfolios" — that would let a save wipe them
+    return d && !d.error && Array.isArray(d.portfolios) ? d.portfolios : null
   } catch { return null }
 }
 
 // Saves in small pieces: a whole portfolio set is too long for one request address.
 // Throws on failure, so the screen can say so (it used to show "saved" even when nothing reached the Sheet).
-export async function saveToSheet(userId, portfolios, send = jsonp) {
+// ts = when the edit was made; the backend ignores a save older than the one it already has.
+// isStale() = a newer edit exists → stop sending this older one.
+export async function saveToSheet(userId, portfolios, send = jsonp, ts = Date.now(), isStale = () => false) {
   const json = JSON.stringify(portfolios), size = 1500, parts = []
   for (let i = 0; i < json.length; i += size) parts.push(json.slice(i, i + size))
   if (!parts.length) parts.push('[]')
@@ -42,7 +45,8 @@ export async function saveToSheet(userId, portfolios, send = jsonp) {
   for (let i = 0; i < parts.length; i++) {
     let r = null, err = null
     for (let a = 0; a < 2 && !r; a++) {
-      try { r = await send(`${APPS_SCRIPT_URL}?action=saveCustomPortfoliosChunk&userId=${encodeURIComponent(userId)}&saveId=${saveId}&part=${i}&total=${parts.length}&chunk=${encodeURIComponent(parts[i])}`) }
+      if (isStale()) return 'superseded'
+      try { r = await send(`${APPS_SCRIPT_URL}?action=saveCustomPortfoliosChunk&userId=${encodeURIComponent(userId)}&saveId=${saveId}&part=${i}&total=${parts.length}&ts=${ts}&chunk=${encodeURIComponent(parts[i])}`) }
       catch (e) { err = e }
     }
     if (!r || r.ok === false) throw new Error((r && r.error) || (err && err.message) || 'Save failed')
@@ -277,6 +281,7 @@ function SortIcon({ col, sort }) {
 
 // ── Tracking Table ────────────────────────────────────────────
 function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
+  const [rmAsk, setRmAsk]         = useState(null)                // remove needs a second tap ("Remove?")
   const [quotes, setQuotes]       = useState({})
   const [loading, setLoading]     = useState(new Set())
   const [addTicker, setAddTicker] = useState('')
@@ -395,16 +400,19 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
                         : <span style={{color:'#475569'}}>—</span>}
                     </td>
                     <td style={tdStyle()}>
-                      <div style={{display:'flex',gap:'6px',justifyContent:'flex-end'}} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div style={{display:'flex',gap:'6px',justifyContent:'flex-end'}} className={`${rmAsk === p.ticker ? '' : 'md:opacity-0 md:group-hover:opacity-100'} transition-opacity`}>
                         {onAnalyze && (
                           <button onClick={() => onAnalyze(p.ticker)}
                             style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#38bdf8',border:'1px solid rgba(14,165,233,0.2)',padding:'2px 8px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>
                             Analyze →
                           </button>
                         )}
-                        <button onClick={() => onRemove(p.ticker)} style={{color:'#475569',background:'transparent',border:'none',cursor:'pointer',display:'flex',alignItems:'center'}}>
-                          <X size={13} />
-                        </button>
+                        {rmAsk === p.ticker
+                          ? <button onClick={() => { setRmAsk(null); onRemove(p.ticker) }} onBlur={() => setRmAsk(null)} autoFocus
+                              style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#ff4466',border:'1px solid rgba(255,68,102,0.3)',padding:'2px 8px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>Remove?</button>
+                          : <button onClick={() => setRmAsk(p.ticker)} title="Remove" aria-label={`Remove ${p.ticker}`} style={{color:'#475569',background:'transparent',border:'none',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                              <X size={13} />
+                            </button>}
                       </div>
                     </td>
                   </tr>
@@ -420,6 +428,7 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
 
 // ── Investment Table ──────────────────────────────────────────
 function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
+  const [rmAsk, setRmAsk]         = useState(null)                // remove needs a second tap ("Remove?")
   const [quotes, setQuotes]       = useState({})
   const [loading, setLoading]     = useState(new Set())
   const [showModal, setShowModal] = useState(false)
@@ -633,7 +642,7 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                         : <span style={{color:'#475569'}}>—</span>}
                     </td>
                     <td style={tdStyle()}>
-                      <div style={{display:'flex',gap:'6px',justifyContent:'flex-end'}} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div style={{display:'flex',gap:'6px',justifyContent:'flex-end'}} className={`${rmAsk === r.ticker ? '' : 'md:opacity-0 md:group-hover:opacity-100'} transition-opacity`}>
                         {onAnalyze && (
                           <button onClick={() => onAnalyze(r.ticker)}
                             style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#38bdf8',border:'1px solid rgba(14,165,233,0.2)',padding:'2px 8px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>
@@ -644,9 +653,12 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                           <button onClick={() => setEditPos(positions.find(p => p.ticker === r.ticker))} title="Edit quantity, buy price or purchase date" aria-label={`Edit ${r.ticker}`}
                             style={{color:'#64748b',background:'transparent',border:'none',cursor:'pointer',fontSize:'13px'}}>✎</button>
                         )}
-                        <button onClick={() => onRemove(r.ticker)} style={{color:'#475569',background:'transparent',border:'none',cursor:'pointer',display:'flex',alignItems:'center'}}>
-                          <X size={13} />
-                        </button>
+                        {rmAsk === r.ticker
+                          ? <button onClick={() => { setRmAsk(null); onRemove(r.ticker) }} onBlur={() => setRmAsk(null)} autoFocus
+                              style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#ff4466',border:'1px solid rgba(255,68,102,0.3)',padding:'2px 8px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>Remove?</button>
+                          : <button onClick={() => setRmAsk(r.ticker)} title="Remove" aria-label={`Remove ${r.ticker}`} style={{color:'#475569',background:'transparent',border:'none',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                              <X size={13} />
+                            </button>}
                       </div>
                     </td>
                   </tr>
@@ -823,7 +835,8 @@ export default function CustomPortfolios({ onAnalyze }) {
   // Saves always go to the CURRENT ID, and only after that ID's portfolios have loaded —
   // otherwise a save could write an empty/other list over what is stored in the Sheet
   const uidRef = useRef(userId); uidRef.current = userId
-  const loadedFor = useRef(null), firstLoad = useRef(true)
+  const loadedFor = useRef(null), firstLoad = useRef(true), saveSeq = useRef(0)
+  const [ready, setReady] = useState(false)                           // this ID's portfolios have loaded → editing allowed
 
   const applyId = async (raw) => {
     const clean = raw.trim().toLowerCase().replace(/[^a-z0-9_]/g, '')
@@ -849,12 +862,15 @@ export default function CustomPortfolios({ onAnalyze }) {
     if (!userId) return
     let alive = true
     loadedFor.current = null
-    setSyncing(true)
+    setSyncing(true); setReady(false)
     const localCopy = () => { try { return JSON.parse(localStorage.getItem('mc_custom_portfolios_v1') || '[]') } catch { return [] } }
     loadFromSheet(userId).then(data => {
       if (!alive || uidRef.current !== userId) return                 // an answer for an ID that is no longer active
-      if (data === null && !firstLoad.current) {                      // switched ID but the Sheet didn't answer: show nothing, save nothing, retry
-        setPortfolios([]); setActiveId(null); setSyncStatus('error'); setSyncing(false)
+      if (data === null) {                                            // the Sheet didn't answer (or answered with an error): editing stays off, retry
+        // show this device's copy read-only on the first load (better than a blank screen), never on an ID switch
+        const local = firstLoad.current ? localCopy() : []
+        setPortfolios(local); setActiveId(local.length ? local[0].id : null)
+        setSyncStatus('offline'); setSyncing(false); setReady(false)
         setTimeout(() => alive && setLoadTick(t => t + 1), 15000)
         return
       }
@@ -866,26 +882,32 @@ export default function CustomPortfolios({ onAnalyze }) {
       if (data !== null) setSyncStatus('')
       firstLoad.current = false
       loadedFor.current = userId
-      setSyncing(false)
+      setSyncing(false); setReady(true)
     })
     return () => { alive = false }
   }, [userId, loadTick])
 
   // Auto-save to Sheet with debounce
   const persistPortfolios = useCallback((updated) => {
+    const uid = uidRef.current
+    // edits are only accepted once this ID's portfolios have loaded — an edit made on top of an empty or
+    // stale list would be saved over the real one
+    if (uid && loadedFor.current !== uid) { setSyncStatus('wait'); return }
     setPortfolios(updated)
     try { localStorage.setItem('mc_custom_portfolios_v1', JSON.stringify(updated)) } catch (e) {}   // a full/blocked browser store must not stop the cloud save
     clearTimeout(saveTimer.current)
-    const uid = uidRef.current
     if (!uid) return                                                   // no ID yet → this browser only
+    const seq = ++saveSeq.current, ts = Date.now()
+    const stale = () => saveSeq.current !== seq || uidRef.current !== uid   // a newer edit (or another ID) → drop this save
     const attempt = async (retry) => {
-      if (uidRef.current !== uid) return                               // ID changed since → never write to the old one
-      if (loadedFor.current !== uid) { saveTimer.current = setTimeout(() => attempt(retry), 1500); return }   // wait for the load
+      if (stale()) return
       try {
-        await saveToSheet(uid, updated)
+        const r = await saveToSheet(uid, updated, jsonp, ts, stale)
+        if (r === 'superseded' || stale()) return
         setSyncStatus('saved')
-        setTimeout(() => setSyncStatus(''), 2000)
+        setTimeout(() => setSyncStatus(s => s === 'saved' ? '' : s), 2000)
       } catch {
+        if (stale()) return
         setSyncStatus('error')                                   // stays visible until a save succeeds
         if (retry) saveTimer.current = setTimeout(() => attempt(false), 15000)
       }
@@ -997,8 +1019,8 @@ export default function CustomPortfolios({ onAnalyze }) {
             )}
           </div>
         ))}
-        <button onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded border border-dashed border-white/20 text-[12px] font-mono text-slate-600 hover:text-slate-300 hover:border-white/30 transition-all">
+        <button onClick={() => setShowCreate(true)} disabled={!ready}
+          className="flex items-center gap-1.5 px-3 py-2 rounded border border-dashed border-white/20 text-[12px] font-mono text-slate-600 hover:text-slate-300 hover:border-white/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
           <Plus size={12} /> New
         </button>
 
@@ -1006,6 +1028,8 @@ export default function CustomPortfolios({ onAnalyze }) {
         <div className="ml-auto flex items-center gap-3">
           {syncing && <span className="font-mono text-[10px] text-slate-600 uppercase tracking-wider animate-pulse">Syncing…</span>}
           {syncStatus === 'saved' && <span className="font-mono text-[10px] text-terminal-green uppercase tracking-wider">✓ Saved</span>}
+          {syncStatus === 'offline' && <span className="font-mono text-[10px] text-terminal-amber tracking-wider">Can't reach your saved portfolios — editing paused, retrying</span>}
+          {syncStatus === 'wait' && <span className="font-mono text-[10px] text-slate-400 tracking-wider">Still loading — try again in a moment</span>}
           {syncStatus === 'error' && <span title="Your changes are kept on this device and will be saved again automatically. If this persists, check your connection." className="font-mono text-[10px] text-terminal-red uppercase tracking-wider">⚠ Not saved to the cloud — kept on this device</span>}
           <UserIdBadge userId={userId} onReset={() => { clearTimeout(saveTimer.current); saveId(''); setUserId(null); setPortfolios([]); setActiveId(null) }} />
         </div>
@@ -1023,7 +1047,7 @@ export default function CustomPortfolios({ onAnalyze }) {
       )}
 
       {/* Empty state */}
-      {portfolios.length === 0 && !syncing && (
+      {portfolios.length === 0 && !syncing && ready && (
         <div className="panel p-16 text-center">
           <BarChart2 size={32} className="text-slate-700 mx-auto mb-4" />
           <div className="font-display font-semibold text-[16px] text-slate-400 mb-2">No portfolios yet</div>
