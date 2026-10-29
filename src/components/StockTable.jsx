@@ -191,7 +191,7 @@ export default function StockTable({ rows, isWatchlist = false, onAnalyze, isMob
                     <td>
                       <button
                         onClick={() => onAnalyze(r.ticker)}
-                        className="opacity-0 group-hover:opacity-100 text-[10px] font-mono text-electric-400 hover:text-electric-300 border border-electric-500/20 hover:border-electric-500/40 px-2 py-0.5 rounded transition-all"
+                        className="md:opacity-0 md:group-hover:opacity-100 text-[10px] font-mono text-electric-400 hover:text-electric-300 border border-electric-500/20 hover:border-electric-500/40 px-2 py-0.5 rounded transition-all"
                       >
                         Analyze →
                       </button>
