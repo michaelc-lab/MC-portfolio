@@ -769,6 +769,7 @@ export function decisionRows(data, board, now = new Date()) {
   const pc = data.priceCheck || {}
   rows.push(pc.status === 'ok' ? { tone: 'ok', dir: 0, text: `Price confirmed by two sources (Google Finance ${fmtPrice(pc.gf)} · Finnhub ${fmtPrice(pc.fh)})` }
     : pc.status === 'warn' ? { tone: 'warn', dir: 0, gate: true, text: `Price sources disagree by ${Math.abs(pc.diff).toFixed(1)}% (Google Finance ${fmtPrice(pc.gf)} vs Finnhub ${fmtPrice(pc.fh)}) — check your broker before trading` }
+    : pc.status === 'gap' ? { tone: 'info', dir: 0, text: `Prices differ by ${Math.abs(pc.diff).toFixed(1)}% right now (Google Finance ${fmtPrice(pc.gf)} vs Finnhub ${fmtPrice(pc.fh)}) — Google can lag up to 20 min on a fast day` }
     : { tone: 'na', dir: 0, text: 'Price from one source only' })
   const er = earningsRow(data.nextEarnings, now)
   if (er) rows.push(er)
@@ -776,7 +777,7 @@ export function decisionRows(data, board, now = new Date()) {
   else if (data.earningsOn === false) rows.push({ tone: 'warn', dir: 0, soon: 'unknown', text: "Earnings date unknown — the calendar didn't answer. Check before trading" })
   const mc = data.mcScore
   let mcCounted = false
-  if (mc && mc.score != null && mc.incomplete) rows.push({ tone: 'warn', dir: 0, text: `MC Score incomplete right now (${mc.score.toFixed(1)}) — price history unavailable; try again in a minute` })
+  if (mc && mc.score != null && mc.incomplete) rows.push({ tone: 'warn', dir: 0, text: `MC Score incomplete right now (${mc.score.toFixed(1)}) — ${/^Market data/.test(String(mc.incomplete)) ? 'market data' : 'price history'} unavailable; try again in a minute` })
   // A low-confidence score (too little data behind it) is shown but never counted as a vote
   else if (mc && mc.score != null && mc.confidence === 'Low') rows.push({ tone: 'na', dir: 0,
     text: `MC Score ${mc.score.toFixed(1)} — too little data behind it${mc.coverage != null ? ` (${mc.coverage}%)` : ''}, not counted` })
@@ -887,36 +888,44 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [aiLoading,   setAiLoading]   = useState(false)
   const [aiError,     setAiError]     = useState(null)
   const lastAutoTicker = useRef(null)
+  // every answer is checked against the request that is current NOW — a slow answer for an earlier ticker is dropped
+  const runSeq = useRef(0), shownTicker = useRef(null)
 
   const run = async (t) => {
     const target = (t || '').trim().toUpperCase()
     if (!target) return
+    const seq = ++runSeq.current
+    shownTicker.current = null
     setLoading(true); setError(null); setData(null); setRevenueData(null); setChartPeriod('1Y')
-    setAiSummary(null); setAiError(null)
+    setAiSummary(null); setAiError(null); setAiLoading(false)
     try {
       const d = await fetchWorkstationData(target)
+      if (seq !== runSeq.current) return
       if (!d?.profile?.name) throw new Error('No data for "' + target + '" — may not be on Finnhub free tier')
+      shownTicker.current = d.ticker || target
       setData(d)
       try {
         const rev = await jsonp(APPS_SCRIPT_URL + '?action=getRevenueData&ticker=' + encodeURIComponent(target))
-        setRevenueData(rev)
+        if (seq === runSeq.current) setRevenueData(rev)
       } catch (e) { /* optional */ }
     } catch (e) {
-      setError(e.message)
+      if (seq === runSeq.current) setError(e.message)
     } finally {
-      setLoading(false)
+      if (seq === runSeq.current) setLoading(false)
     }
   }
 
   const fetchAISummary = React.useCallback(async () => {
     if (!data) return
+    const ticker = data.ticker
     setAiLoading(true); setAiError(null)
     try {
-      const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(data.ticker))
+      const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(ticker))
+      if (shownTicker.current !== ticker) return                    // you moved on to another stock
       if (result.error) setAiError(result.error)
       else setAiSummary(result.summary)
-    } catch (e) { setAiError(e.message) }
-    finally { setAiLoading(false) }
+    } catch (e) { if (shownTicker.current === ticker) setAiError(e.message) }
+    finally { if (shownTicker.current === ticker) setAiLoading(false) }
   }, [data])
 
   useEffect(() => {
@@ -1173,6 +1182,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                         {planBuys.length > 0 && (
                           <span className="font-mono text-[12px] text-slate-500">{planBuys.length} plan/ESPP</span>
                         )}
+                        <span className="font-mono text-[11px] text-slate-600">last 12 months</span>
                       </div>
                       <span style={{color:sentColor}} className="font-mono text-[11px] font-semibold">{netSentiment}</span>
                     </div>
@@ -1291,9 +1301,10 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
               </div>
               {data.fairValue ? (() => {
                 const fv = data.fairValue
-                const currentPrice = livePrice?.price
-                const upside = fv.fairValue && currentPrice ? ((fv.fairValue - currentPrice) / currentPrice) * 100 : fv.upside
-                const isUnder = upside > 0
+                // current price: the Sheet's, else the score's own price — upside only when both numbers are real
+                const currentPrice = livePrice?.price ?? data.mcScore?.price ?? null
+                const upside = fv.fairValue && currentPrice ? ((fv.fairValue - currentPrice) / currentPrice) * 100 : null
+                const isUnder = upside != null && upside > 0
                 return (
                   <div className="space-y-3">
                     <div>
@@ -1306,9 +1317,11 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                           </span>
                         )}
                       </div>
-                      <div className={`font-mono text-[10px] mt-1 ${isUnder ? 'text-terminal-green' : 'text-terminal-red'}`}>
-                        {isUnder ? '▼ Undervalued' : '▲ Overvalued'}
-                      </div>
+                      {upside != null && (
+                        <div className={`font-mono text-[10px] mt-1 ${isUnder ? 'text-terminal-green' : 'text-terminal-red'}`}>
+                          {isUnder ? '▼ Undervalued' : '▲ Overvalued'}
+                        </div>
+                      )}
                     </div>
                     <div className="h-px bg-white/5" />
                     <div className="space-y-1.5">
