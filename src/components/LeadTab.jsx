@@ -606,9 +606,11 @@ function ScoreLeaders({ onAnalyze, isMobile }) {
     if (fetched.current) return
     fetched.current = true
     jsonp(`${APPS_SCRIPT_URL}?action=getScoreLeaders`)
-      .then(d => setData(d))
+      .then(d => { if (!d || d.error || !Array.isArray(d.top)) setErr('Scores unavailable right now'); else setData(d) })
       .catch(e => setErr(e.message))
   }, [])
+  const [showMkt, setShowMkt] = useState(false)
+  const mkt = data && data.market
 
   const reg = data && data.regime ? (LB_REGIME[data.regime.regime] || LB_REGIME.neutral) : null
   const updated = data && data.updated ? new Date(data.updated).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : null
@@ -643,6 +645,26 @@ function ScoreLeaders({ onAnalyze, isMobile }) {
             <div>
               <div className="px-4 pt-2 pb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-terminal-red">▼ Weakest — review these</div>
               {data.bottom.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} weak />)}
+            </div>
+          )}
+        </div>
+      )}
+      {mkt && (
+        <div className="border-t border-white/5" data-testid="market-leaders">
+          <button onClick={() => setShowMkt(v => !v)} className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-white/[0.02]">
+            <span className="font-display text-[12px] text-slate-300">
+              Wider market <span className="text-slate-600">· {mkt.name}</span>
+            </span>
+            <span className="font-display text-[11px] text-slate-500 flex-shrink-0">
+              {mkt.scored < 50
+                ? `Scoring in the background — ${mkt.scored} of ${mkt.size} so far`
+                : <>{!showMkt && mkt.top.slice(0, 3).map(r => r.ticker).join(' · ')}{!showMkt && ' · '}{showMkt ? 'Hide' : 'Top 10'}</>}
+            </span>
+          </button>
+          {showMkt && mkt.scored >= 50 && (
+            <div>
+              {mkt.top.map((r, i) => <LeaderRow key={r.ticker} r={{ ...r, signal: r.yours ? 'In your stocks' + (r.signal ? ' · ' + r.signal : '') : r.signal }} i={i} onAnalyze={onAnalyze} isMobile={isMobile} />)}
+              <div className="px-4 py-2 font-display text-[11px] text-slate-600">{mkt.scored} of {mkt.size} stocks scored in the last 5 days · each rescored about every 3 days</div>
             </div>
           )}
         </div>
