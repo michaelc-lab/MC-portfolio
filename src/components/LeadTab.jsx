@@ -610,7 +610,9 @@ function ScoreLeaders({ onAnalyze, isMobile }) {
       .catch(e => setErr(e.message))
   }, [])
   const [showMkt, setShowMkt] = useState(false)
-  const mkt = data && data.market
+  // the wider-market list never repeats your own stocks — filtered here too, so it holds even if the backend is older
+  const mine = new Set(((data && data.all) || []).map(r => String(r.ticker).toUpperCase()))
+  const mkt = data && data.market ? { ...data.market, top: (data.market.top || []).filter(r => !r.yours && !mine.has(String(r.ticker).toUpperCase())) } : null
 
   const reg = data && data.regime ? (LB_REGIME[data.regime.regime] || LB_REGIME.neutral) : null
   const updated = data && data.updated ? new Date(data.updated).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : null
