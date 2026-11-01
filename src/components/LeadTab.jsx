@@ -653,7 +653,7 @@ function ScoreLeaders({ onAnalyze, isMobile }) {
         <div className="border-t border-white/5" data-testid="market-leaders">
           <button onClick={() => setShowMkt(v => !v)} className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-white/[0.02]">
             <span className="font-display text-[12px] text-slate-300">
-              Wider market <span className="text-slate-600">· {mkt.name}</span>
+              Wider market <span className="text-slate-600">· {mkt.name} · not on your lists</span>
             </span>
             <span className="font-display text-[11px] text-slate-500 flex-shrink-0">
               {mkt.scored < 50
@@ -663,7 +663,7 @@ function ScoreLeaders({ onAnalyze, isMobile }) {
           </button>
           {showMkt && mkt.scored >= 50 && (
             <div>
-              {mkt.top.map((r, i) => <LeaderRow key={r.ticker} r={{ ...r, signal: r.yours ? 'In your stocks' + (r.signal ? ' · ' + r.signal : '') : r.signal }} i={i} onAnalyze={onAnalyze} isMobile={isMobile} />)}
+              {mkt.top.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} />)}
               <div className="px-4 py-2 font-display text-[11px] text-slate-600">{mkt.scored} of {mkt.size} stocks scored in the last 5 days · each rescored about every 3 days</div>
             </div>
           )}
