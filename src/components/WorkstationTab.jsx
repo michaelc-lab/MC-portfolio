@@ -506,7 +506,8 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
           </div>
           <div className="text-[12px] text-slate-500 mt-3 leading-relaxed">
             <div><InfoTip text={RANGE_TIP}><span>Likely {range.low.toFixed(1)}–{range.high.toFixed(1)}</span></InfoTip></div>
-            {mc.universe && <div>#{mc.universe.rank} of {mc.universe.n} in your stocks</div>}
+            {mc.universe && mc.universe.rank && <div>#{mc.universe.rank} of {mc.universe.n} in your stocks</div>}
+            {mc.universe && mc.universe.market && <div>#{mc.universe.market.rank} of {mc.universe.market.n} in the wider market</div>}
             {agreeText && <div><InfoTip text={AGREE_TIP}><span>{agreeText}</span></InfoTip></div>}
             {mc.sector && <div className="text-slate-600">Compared with {mc.sector} peers</div>}
           </div>
