@@ -1,0 +1,300 @@
+# MC Portfolio — free data-source check (runs on GitHub's servers, open internet, free).
+# Run it: GitHub → Actions → "Data source check" → Run workflow. Takes ~20 minutes.
+# Everything is in this one file. It writes its findings to reports/data-source-check.md in this repo (no secrets, no portfolio data).
+name: Data source check
+on:
+  workflow_dispatch:
+    inputs:
+      poll_minutes:
+        description: "How many minutes to watch the SEC live feed (latency test)"
+        default: "15"
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run checks
+        env:
+          POLL_MINUTES: ${{ github.event.inputs.poll_minutes }}
+          SEC_UA: ${{ vars.SEC_UA }}
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+        run: |
+          mkdir -p reports
+          python3 - reports/data-source-check.md <<'PYEOF'
+          """MC Portfolio — free data-source check.
+
+          Runs on GitHub Actions (open internet). Answers, with measurements, whether the free sources the new design
+          depends on actually work, how fast they are, and how complete they are. Writes a Markdown report.
+          No secrets are printed. FINNHUB_KEY is optional (GitHub secret); without it the Finnhub section is skipped.
+          """
+          import datetime as dt
+          import json
+          import os
+          import re
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+          import xml.etree.ElementTree as ET
+
+          UA = os.environ.get("SEC_UA") or "MC-Portfolio personal research admin@mc-portfolio.example"
+          OUT = sys.argv[1] if len(sys.argv) > 1 else "reports/data-source-check.md"
+          POLL_MIN = int(os.environ.get("POLL_MINUTES") or 15)
+          FINNHUB_KEY = os.environ.get("FINNHUB_KEY") or ""
+          NOW = lambda: dt.datetime.now(dt.timezone.utc)
+          REPORT = []
+          RESULTS = {}
+
+
+          def say(line=""):
+              print(line)
+              REPORT.append(line)
+
+
+          def get(url, headers=None, timeout=30, binary=False):
+              """Returns (status, body|None, seconds). Never raises."""
+              h = {"User-Agent": UA, "Accept-Encoding": "identity"}
+              h.update(headers or {})
+              t0 = time.time()
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=timeout) as r:
+                      data = r.read()
+                      return r.status, (data if binary else data.decode("utf-8", "replace")), time.time() - t0
+              except urllib.error.HTTPError as e:
+                  return e.code, None, time.time() - t0
+              except Exception as e:  # network error
+                  return 0, str(e)[:120], time.time() - t0
+
+
+          def verdict(name, ok, detail):
+              RESULTS[name] = ok
+              say(f"| {name} | {'PASS' if ok else 'FAIL'} | {detail} |")
+
+
+          # ---------------------------------------------------------------- universe (for coverage checks)
+          def load_universe():
+              st, body, _ = get("https://www.sec.gov/files/company_tickers.json")
+              if st != 200:
+                  return {}, st
+              m = {}
+              for v in json.loads(body).values():
+                  m[v["ticker"].upper().replace("-", ".")] = int(v["cik_str"])
+              return m, st
+
+
+          SAMPLE = ["AAPL", "MSFT", "NVDA", "JPM", "BRK.B", "XOM", "LLY", "COST", "TSLA", "AMZN", "META", "GOOGL", "V", "MA",
+                    "UNH", "HD", "PG", "KO", "PEP", "NFLX", "AMD", "INTC", "CRM", "ORCL", "ADBE", "QCOM", "TXN", "AVGO", "CSCO",
+                    "MU", "ASML", "IBM", "CAT", "WMT", "DIS", "BA", "GE", "F", "GM", "PLUG", "FCEL", "SOFI", "RIOT", "UPST",
+                    "AFRM", "LCID", "RIVN", "CHPT", "BYND", "OPEN"]
+
+
+          def main():
+              started = NOW()
+              say(f"# Data source check — {started:%Y-%m-%d %H:%M} UTC")
+              say("")
+              say("Measured live from GitHub's servers. PASS = usable for the design as planned.")
+              say("")
+              say("| Check | Result | Detail |")
+              say("|---|---|---|")
+
+              # 1. ticker → CIK map
+              cik, st = load_universe()
+              verdict("SEC ticker list", len(cik) > 5000, f"HTTP {st}, {len(cik)} tickers mapped to SEC company IDs")
+              cov = [t for t in SAMPLE if t in cik]
+              verdict("Sample of 50 (large + small caps) found at SEC", len(cov) >= 45,
+                      f"{len(cov)}/50 found; missing: {', '.join(t for t in SAMPLE if t not in cik) or 'none'}")
+
+              # 2. company financial data (XBRL companyfacts) — needed for the score
+              need = {
+                  "GrossProfit": ["GrossProfit"],
+                  "Revenue": ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"],
+                  "NetIncome": ["NetIncomeLoss"],
+                  "OperatingCashFlow": ["NetCashProvidedByUsedInOperatingActivities"],
+                  "Assets": ["Assets"],
+                  "Equity": ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+                  "Debt": ["LongTermDebt", "LongTermDebtNoncurrent", "DebtCurrent"],
+                  "Cash": ["CashAndCashEquivalentsAtCarryingValue"],
+                  "SharesOutstanding": ["dei:EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"],
+              }
+              have = {k: 0 for k in need}
+              hist_years = []
+              filed_dates_ok = 0
+              checked = 0
+              for t in cov[:50]:
+                  st, body, _ = get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik[t]:010d}.json", timeout=40)
+                  time.sleep(0.15)  # stay far below SEC's 10 requests/second
+                  if st != 200:
+                      continue
+                  checked += 1
+                  facts = json.loads(body).get("facts", {})
+                  gaap, dei = facts.get("us-gaap", {}), facts.get("dei", {})
+                  for k, tags in need.items():
+                      for tag in tags:
+                          src = dei if tag.startswith("dei:") else gaap
+                          if tag.replace("dei:", "") in src:
+                              have[k] += 1
+                              break
+                  rev = (gaap.get("NetIncomeLoss") or {}).get("units", {}).get("USD", [])
+                  yrs = sorted({x.get("fy") for x in rev if x.get("fy")})
+                  if yrs:
+                      hist_years.append(yrs[-1] - yrs[0] + 1)
+                  if rev and all("filed" in x for x in rev[:20]):
+                      filed_dates_ok += 1
+              verdict("Company financials (SEC XBRL)", checked >= 40,
+                      f"{checked}/{len(cov)} companies returned; field coverage: " +
+                      ", ".join(f"{k} {v}/{checked}" for k, v in have.items()))
+              if hist_years:
+                  hist_years.sort()
+                  verdict("History depth (years of net income)", hist_years[len(hist_years) // 2] >= 10,
+                          f"median {hist_years[len(hist_years) // 2]} years, min {hist_years[0]}, max {hist_years[-1]}")
+              verdict("Filing dates present (needed to avoid look-ahead)", filed_dates_ok >= checked * 0.9,
+                      f"{filed_dates_ok}/{checked} companies have a filing date on every fact")
+
+              # 3. one-call market-wide data (frames) — fast nightly refresh
+              st, body, sec = get("https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/CY2024Q4I.json", timeout=60)
+              n = len(json.loads(body).get("data", [])) if st == 200 else 0
+              verdict("All-company snapshot in one call (XBRL frames)", n > 4000, f"HTTP {st}, {n} companies, {sec:.1f}s")
+
+              # 4. filing history with 8-K item codes — needed for the event history database
+              st, body, _ = get(f"https://data.sec.gov/submissions/CIK{cik.get('AAPL', 320193):010d}.json")
+              items_ok, oldest, n8k = False, "", 0
+              if st == 200:
+                  rec = json.loads(body)["filings"]["recent"]
+                  forms, items, dates = rec.get("form", []), rec.get("items", []), rec.get("filingDate", [])
+                  k = [i for i, f in enumerate(forms) if f == "8-K"]
+                  n8k = len(k)
+                  items_ok = bool(k) and sum(1 for i in k if items[i]) >= 0.9 * len(k)
+                  oldest = min(dates[i] for i in k) if k else ""
+              verdict("8-K item codes in filing history", items_ok,
+                      f"Apple: {n8k} 8-Ks in the recent list, item codes on ≥90%: {items_ok}, oldest {oldest}")
+              st, body, _ = get("https://www.sec.gov/Archives/edgar/full-index/2012/QTR1/form.idx", timeout=60)
+              n12 = body.count("\n8-K ") if st == 200 and body else 0
+              verdict("Historical filing index (2012)", n12 > 10000, f"HTTP {st}, {n12} 8-K filings listed for Q1 2012")
+
+              # 5. live feed latency (the alert engine) — poll the SEC 'latest filings' Atom feed
+              say("")
+              say(f"**Live filing feed — watched for {POLL_MIN} minutes, polled every 60 s**")
+              say("")
+              say("| Check | Result | Detail |")
+              say("|---|---|---|")
+              seen, lags, polls, ok_polls = {}, [], 0, 0
+              feed = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&company=&dateb=&owner=include&count=100&output=atom"
+              ns = {"a": "http://www.w3.org/2005/Atom"}
+              end = time.time() + POLL_MIN * 60
+              first = True
+              while time.time() < end:
+                  polls += 1
+                  st, body, _ = get(feed, timeout=30)
+                  now = NOW()
+                  if st == 200 and body:
+                      ok_polls += 1
+                      try:
+                          root = ET.fromstring(body)
+                          for e in root.findall("a:entry", ns):
+                              eid = (e.findtext("a:id", default="", namespaces=ns) or "").strip()
+                              upd = e.findtext("a:updated", default="", namespaces=ns)
+                              if not eid or eid in seen:
+                                  continue
+                              seen[eid] = upd
+                              if first:
+                                  continue  # entries already there at the start: their age says nothing about latency
+                              try:
+                                  t = dt.datetime.fromisoformat(upd.replace("Z", "+00:00"))
+                                  lags.append((now - t).total_seconds())
+                              except Exception:
+                                  pass
+                      except ET.ParseError:
+                          pass
+                  first = False
+                  time.sleep(max(0, 60 - (NOW() - now).total_seconds()))
+              lags = sorted(x for x in lags if x > -120)
+              if lags:
+                  p = lambda q: lags[min(len(lags) - 1, int(q * len(lags)))]
+                  detail = (f"{ok_polls}/{polls} polls OK; {len(lags)} new filings seen; time from SEC acceptance to our "
+                            f"poll: median {p(0.5):.0f}s, 90% within {p(0.9):.0f}s, max {lags[-1]:.0f}s")
+                  verdict("Live filings latency (alerts)", p(0.9) <= 180, detail)
+              else:
+                  verdict("Live filings latency (alerts)", False,
+                          f"{ok_polls}/{polls} polls OK but no new filings seen (outside US business hours?)")
+
+              # 6. daily prices incl. delisted stocks (survivorship) — Stooq free CSV
+              say("")
+              say("| Check | Result | Detail |")
+              say("|---|---|---|")
+              st, body, _ = get("https://stooq.com/q/d/l/?s=aapl.us&i=d")
+              rows = body.count("\n") if st == 200 and body else 0
+              first_date = body.split("\n")[1].split(",")[0] if rows > 1 else ""
+              verdict("Daily price history (Stooq)", rows > 2000, f"HTTP {st}, {rows} days for AAPL since {first_date}")
+              dead = {"twtr.us": "Twitter (taken private 2022)", "atvi.us": "Activision (acquired 2023)", "frc.us": "First Republic (failed 2023)"}
+              got = []
+              for s, name in dead.items():
+                  st, body, _ = get(f"https://stooq.com/q/d/l/?s={s}&i=d")
+                  got.append(f"{name}: {'yes' if st == 200 and body and body.count(chr(10)) > 100 else 'no'}")
+              verdict("Prices for delisted stocks (avoids survivorship bias)", sum('yes' in g for g in got) >= 2, "; ".join(got))
+
+              # 7. press-release wires (often faster than 8-Ks)
+              wires = {
+                  "GlobeNewswire": "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies",
+                  "PR Newswire": "https://www.prnewswire.com/rss/news-releases-list.rss",
+                  "Business Wire": "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFtRWA==",
+                  "Accesswire": "https://www.accesswire.com/users/newsroom/rss",
+              }
+              for name, url in wires.items():
+                  st, body, _ = get(url, timeout=30)
+                  newest = ""
+                  if st == 200 and body:
+                      m = re.findall(r"<pubDate>([^<]+)</pubDate>", body)
+                      if m:
+                          try:
+                              from email.utils import parsedate_to_datetime
+                              ages = sorted((NOW() - parsedate_to_datetime(x)).total_seconds() / 60 for x in m[:20])
+                              newest = f"newest item {ages[0]:.0f} min old, {len(m)} items"
+                          except Exception:
+                              newest = f"{len(m)} items"
+                  verdict(f"Press releases: {name}", st == 200 and bool(newest), f"HTTP {st} {newest}")
+
+              # 8. alert delivery + AI
+              st, _, _ = get("https://api.telegram.org/")
+              verdict("Telegram (phone alerts) reachable", st in (200, 302, 404), f"HTTP {st}")
+
+              # 9. Finnhub free tier (optional)
+              if FINNHUB_KEY:
+                  eps = {"quote": "quote?symbol=AAPL", "metric (fundamentals)": "stock/metric?symbol=AAPL&metric=all",
+                         "recommendation trends": "stock/recommendation?symbol=AAPL", "earnings surprises": "stock/earnings?symbol=AAPL",
+                         "insider transactions": "stock/insider-transactions?symbol=AAPL", "company news": "company-news?symbol=AAPL&from=2026-10-01&to=2026-10-31",
+                         "EPS estimates": "stock/eps-estimate?symbol=AAPL", "upgrades/downgrades": "stock/upgrade-downgrade?symbol=AAPL",
+                         "price target": "stock/price-target?symbol=AAPL", "earnings calendar": "calendar/earnings?from=2026-11-01&to=2026-11-07",
+                         "financials as reported": "stock/financials-reported?symbol=AAPL&freq=annual"}
+                  for name, path in eps.items():
+                      st, body, _ = get(f"https://finnhub.io/api/v1/{path}&token={FINNHUB_KEY}")
+                      ok = st == 200 and body and body.strip() not in ("{}", "[]", "null") and "access" not in body.lower()[:200]
+                      verdict(f"Finnhub free: {name}", ok, f"HTTP {st}")
+                      time.sleep(1.1)
+              else:
+                  say("| Finnhub free tier | SKIPPED | add a FINNHUB_KEY repository secret to test it |")
+
+              say("")
+              passed = sum(1 for v in RESULTS.values() if v)
+              say(f"**{passed} of {len(RESULTS)} checks passed.** Finished {NOW():%H:%M} UTC.")
+              os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
+              with open(OUT, "w") as f:
+                  f.write("\n".join(REPORT) + "\n")
+
+
+          if __name__ == "__main__":
+              main()
+
+          PYEOF
+      - name: Save report to the repo
+        run: |
+          git config user.name "data-source-check"
+          git config user.email "actions@users.noreply.github.com"
+          git add reports/data-source-check.md
+          git commit -m "Data source check report" || echo "nothing to commit"
+          git push
