@@ -2,7 +2,27 @@
 // each with a different timeout — the Lead tab gave up after 20 s, which is how "Timeout" errors appeared).
 export const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwUQqqI6PAa64xq5ZALeJSUWuy86pVtSEG6rIMhgNOQ-7XS-t7PJRRncJ1mi7OAwd0/exec'
 
+// ── Owner key ─────────────────────────────────────────────────
+// Your private key (created once in Apps Script by setupOwnerKey). Kept in this browser only and sent with every
+// request to your backend — without it, My Portfolios, the AI summary and Radar ratings answer "locked".
+const KEY_STORE = 'mc_owner_key'
+export function getOwnerKey() { try { return localStorage.getItem(KEY_STORE) || '' } catch { return '' } }
+export function setOwnerKey(k) {
+  const v = String(k || '').trim()
+  try { if (v) localStorage.setItem(KEY_STORE, v); else localStorage.removeItem(KEY_STORE) } catch {}
+  return v
+}
+export const isLocked = d => !!(d && d.locked)
+function withKey(url) {
+  const k = getOwnerKey()
+  return k && url.startsWith(APPS_SCRIPT_URL) ? url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(k) : url
+}
+
+// Links that come from outside (news, filings) open only if they are ordinary web links
+export const safeUrl = u => (typeof u === 'string' && /^https?:\/\//i.test(u.trim()) ? u.trim() : null)
+
 export function jsonpOnce(url, timeoutMs = 30000) {
+  url = withKey(url)
   return new Promise((resolve, reject) => {
     const cbName = '_cb_' + Math.random().toString(36).slice(2)
     const script = document.createElement('script')
