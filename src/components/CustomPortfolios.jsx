@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { APPS_SCRIPT_URL, jsonp } from '../lib/api'
+import { APPS_SCRIPT_URL, jsonp, isLocked, getOwnerKey, setOwnerKey } from '../lib/api'
 import { Plus, X, Edit2, Trash2, Check, TrendingUp, DollarSign, BarChart2, Search } from 'lucide-react'
 import { fmtMoney, fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
 
@@ -9,16 +9,15 @@ const QUOTE_TTL = 120000
 // ── User ID — persisted in localStorage, syncs data to Sheet ─
 function saveId(id) {
   try { localStorage.setItem('mc_user_id', id) } catch(e) {}
-  document.cookie = 'mc_user_id=' + encodeURIComponent(id) + '; max-age=31536000; path=/; SameSite=Lax'
+  document.cookie = 'mc_user_id=; max-age=0; path=/; SameSite=Lax'      // the old cookie copy is no longer kept (it travelled with every page request)
 }
 
 function getSavedId() {
   let id = null
   try { id = localStorage.getItem('mc_user_id') } catch(e) {}
-  if (!id) {
-    const m = document.cookie.match(/mc_user_id=([^;]+)/)
-    if (m) id = decodeURIComponent(m[1])
-  }
+  const m = document.cookie.match(/mc_user_id=([^;]+)/)
+  if (!id && m) id = decodeURIComponent(m[1])
+  if (m && id) saveId(id)                                             // move an old cookie copy into this browser's storage, drop the cookie
   return id || null
 }
 
@@ -29,6 +28,7 @@ async function loadFromSheet(userId) {
   try {
     const d = await jsonp(`${APPS_SCRIPT_URL}?action=getCustomPortfolios&userId=${encodeURIComponent(userId)}`)
     // a backend error is a FAILED load (null), never "you have no portfolios" — that would let a save wipe them
+    if (isLocked(d)) return 'locked'                                  // the owner key is missing or wrong
     return d && !d.error && Array.isArray(d.portfolios) ? d.portfolios : null
   } catch { return null }
 }
@@ -49,6 +49,7 @@ export async function saveToSheet(userId, portfolios, send = jsonp, ts = Date.no
       try { r = await send(`${APPS_SCRIPT_URL}?action=saveCustomPortfoliosChunk&userId=${encodeURIComponent(userId)}&saveId=${saveId}&part=${i}&total=${parts.length}&ts=${ts}&chunk=${encodeURIComponent(parts[i])}`) }
       catch (e) { err = e }
     }
+    if (isLocked(r)) throw new Error('locked')
     if (!r || r.ok === false) throw new Error((r && r.error) || (err && err.message) || 'Save failed')
     if (i === parts.length - 1 && !r.complete) throw new Error('Save incomplete')
   }
@@ -708,6 +709,21 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
 
 
 
+// Shown when the backend answers "locked": this device has no owner key yet (or a wrong one)
+export function OwnerKeyUnlock({ onUnlock }) {
+  const [val, setVal] = useState('')
+  const had = !!getOwnerKey()
+  const go = () => { if (val.trim().length < 8) return; setOwnerKey(val); setVal(''); onUnlock() }
+  return (
+    <span className="flex items-center gap-2 flex-wrap" data-testid="owner-unlock">
+      <span className="font-mono text-[10px] text-terminal-amber tracking-wider">{had ? 'Owner key not accepted — paste it again' : 'Locked — paste your owner key to see and edit your portfolios'}</span>
+      <input type="password" value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} placeholder="Owner key"
+        aria-label="Owner key" className="bg-navy-900 border border-white/10 rounded px-2 py-1 text-[12px] text-slate-200 w-40 focus:outline-none focus:border-electric-500/50" />
+      <button onClick={go} className="px-2.5 py-1 rounded border border-electric-500/40 text-[11px] text-electric-300 hover:bg-electric-500/10">Unlock</button>
+    </span>
+  )
+}
+
 function ImportIdSection({ onClose }) {
   const [val, setVal] = useState('')
   const [applied, setApplied] = useState(false)
@@ -715,11 +731,7 @@ function ImportIdSection({ onClose }) {
   const handleApply = () => {
     const id = val.trim()
     if (!id.startsWith('u_')) return
-    try { localStorage.setItem('mc_user_id', id) } catch(e) {}
-    // Also save to cookie for Safari
-    const expires = new Date()
-    expires.setFullYear(expires.getFullYear() + 2)
-    document.cookie = 'mc_user_id=' + id + '; expires=' + expires.toUTCString() + '; path=/; SameSite=Lax'
+    saveId(id)
     setApplied(true)
     setTimeout(() => {
       onClose()
@@ -866,6 +878,12 @@ export default function CustomPortfolios({ onAnalyze }) {
     const localCopy = () => { try { return JSON.parse(localStorage.getItem('mc_custom_portfolios_v1') || '[]') } catch { return [] } }
     loadFromSheet(userId).then(data => {
       if (!alive || uidRef.current !== userId) return                 // an answer for an ID that is no longer active
+      if (data === 'locked') {                                        // no (or a wrong) owner key on this device: read-only, ask for the key
+        const local = firstLoad.current ? localCopy() : []
+        setPortfolios(local); setActiveId(local.length ? local[0].id : null)
+        setSyncStatus('locked'); setSyncing(false); setReady(false)
+        return
+      }
       if (data === null) {                                            // the Sheet didn't answer (or answered with an error): editing stays off, retry
         // show this device's copy read-only on the first load (better than a blank screen), never on an ID switch
         const local = firstLoad.current ? localCopy() : []
@@ -892,7 +910,7 @@ export default function CustomPortfolios({ onAnalyze }) {
     const uid = uidRef.current
     // edits are only accepted once this ID's portfolios have loaded — an edit made on top of an empty or
     // stale list would be saved over the real one
-    if (uid && loadedFor.current !== uid) { setSyncStatus('wait'); return }
+    if (uid && loadedFor.current !== uid) { setSyncStatus(st => st === 'locked' ? st : 'wait'); return }
     setPortfolios(updated)
     try { localStorage.setItem('mc_custom_portfolios_v1', JSON.stringify(updated)) } catch (e) {}   // a full/blocked browser store must not stop the cloud save
     clearTimeout(saveTimer.current)
@@ -906,8 +924,9 @@ export default function CustomPortfolios({ onAnalyze }) {
         if (r === 'superseded' || stale()) return
         setSyncStatus('saved')
         setTimeout(() => setSyncStatus(s => s === 'saved' ? '' : s), 2000)
-      } catch {
+      } catch (e) {
         if (stale()) return
+        if (e && e.message === 'locked') { setSyncStatus('locked'); setReady(false); loadedFor.current = null; return }
         setSyncStatus('error')                                   // stays visible until a save succeeds
         if (retry) saveTimer.current = setTimeout(() => attempt(false), 15000)
       }
@@ -1029,6 +1048,7 @@ export default function CustomPortfolios({ onAnalyze }) {
           {syncing && <span className="font-mono text-[10px] text-slate-600 uppercase tracking-wider animate-pulse">Syncing…</span>}
           {syncStatus === 'saved' && <span className="font-mono text-[10px] text-terminal-green uppercase tracking-wider">✓ Saved</span>}
           {syncStatus === 'offline' && <span className="font-mono text-[10px] text-terminal-amber tracking-wider">Can't reach your saved portfolios — editing paused, retrying</span>}
+          {syncStatus === 'locked' && <OwnerKeyUnlock onUnlock={() => { setSyncStatus(''); setLoadTick(t => t + 1) }} />}
           {syncStatus === 'wait' && <span className="font-mono text-[10px] text-slate-400 tracking-wider">Still loading — try again in a moment</span>}
           {syncStatus === 'error' && <span title="Your changes are kept on this device and will be saved again automatically. If this persists, check your connection." className="font-mono text-[10px] text-terminal-red uppercase tracking-wider">⚠ Not saved to the cloud — kept on this device</span>}
           <UserIdBadge userId={userId} onReset={() => { clearTimeout(saveTimer.current); saveId(''); setUserId(null); setPortfolios([]); setActiveId(null) }} />
