@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { APPS_SCRIPT_URL, jsonp } from '../lib/api'
+import { APPS_SCRIPT_URL, jsonp, safeUrl } from '../lib/api'
 import { oddsLabel } from '../lib/odds'
 import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Sparkles } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar } from 'recharts'
@@ -568,7 +568,7 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
       {showTrack && (
         <div className="mt-4 pt-4 border-t border-white/5">
           <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">
-            Live track record · 30-day return after each score, vs S&amp;P 500
+            Live track record · your stocks · 30-day return after each score, vs S&amp;P 500
           </div>
           {trackLoading && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking every past score against what happened next…</div>}
           {track && track.error && <div className="font-mono text-[11px] text-terminal-red">{track.error}</div>}
@@ -639,6 +639,39 @@ const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, ai
                 Each month counts once (stocks in the same month share the same market move). A working model shows Very favorable &gt; Favorable &gt; Neutral &gt; Unfavorable in "vs S&amp;P 500", month after month.
                 {' '}{track.learning && track.learning.active ? `Some weights adjusted from ${track.learning.periods} months of results.` : 'Weights stay at the research base until a factor\'s edge is statistically clear.'}
               </div>
+            </div>
+          )}
+          {track && !track.error && track.market && track.market.total > 0 && (
+            <div className="mt-4 pt-3 border-t border-white/5" data-testid="track-market">
+              <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Wider market · S&amp;P 500 + Nasdaq-100 · not on your lists · measured separately</div>
+              {!(track.market.months > 0) ? (
+                <div className="font-mono text-[11px] text-slate-500 leading-relaxed">
+                  Collecting data: {track.market.total} score{track.market.total === 1 ? '' : 's'} logged{track.market.firstDate ? ' since ' + track.market.firstDate : ''}.
+                  {track.market.firstResults && <> First 30-day results on <span className="text-slate-300">{track.market.firstResults}</span>.</>}
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <div className="font-mono text-[11px] text-slate-300 mb-1">{track.market.months} month{track.market.months === 1 ? '' : 's'} of results{track.market.months < 6 && <span className="text-slate-500"> — too early to judge</span>}</div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>{['Rating', 'Stocks', 'Avg 30d', 'vs S&P 500', 'Beat S&P'].map((h, i) => (
+                        <th key={h} style={{ ...th, textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody>
+                      {track.market.buckets.map(b => { const base = b.label.startsWith('All stocks'); return (
+                        <tr key={b.label} style={base ? { borderTop: '1px solid rgba(148,163,184,0.15)' } : undefined}>
+                          <td style={{ ...td, color: base ? '#64748b' : '#cbd5e1', fontStyle: base ? 'italic' : 'normal' }}>{oddsLabel(b.label)}</td>
+                          <td style={{ ...td, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
+                          <td style={{ ...td, textAlign: 'right', color: pctColor(b.avgReturn) }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
+                          <td style={{ ...td, fontWeight: 700, textAlign: 'right', color: pctColor(b.avgVsSpy) }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
+                          <td style={{ ...td, color: '#94a3b8', textAlign: 'right' }}>{b.periods ? `${b.beatPeriods} of ${b.periods} mo` : '—'}</td>
+                        </tr>
+                      ) })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -867,8 +900,8 @@ function DecisionCheck({ data }) {
             <div key={i} className="flex gap-3 text-[13px] leading-snug">
               <span style={{ color: t[1] }} className="w-4 text-center flex-shrink-0">{t[0]}</span>
               <div className="min-w-0">
-                <span className="text-slate-300">{r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.text}</a> : r.text}</span>
-                {r.sub && <div className="text-[11px] text-slate-600">{r.subUrl ? <a href={r.subUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.sub}</a> : r.sub}</div>}
+                <span className="text-slate-300">{safeUrl(r.url) ? <a href={safeUrl(r.url)} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.text}</a> : r.text}</span>
+                {r.sub && <div className="text-[11px] text-slate-600">{safeUrl(r.subUrl) ? <a href={safeUrl(r.subUrl)} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.sub}</a> : r.sub}</div>}
               </div>
             </div>
           )
@@ -923,7 +956,8 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
     try {
       const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(ticker))
       if (shownTicker.current !== ticker) return                    // you moved on to another stock
-      if (result.error) setAiError(result.error)
+      if (result.locked) setAiError('The AI summary is for the owner only — unlock with your owner key in My Portfolios')
+      else if (result.error) setAiError(result.error)
       else setAiSummary(result.summary)
     } catch (e) { if (shownTicker.current === ticker) setAiError(e.message) }
     finally { if (shownTicker.current === ticker) setAiLoading(false) }
@@ -1428,7 +1462,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                 ? <div className="p-6 text-center text-slate-600 font-mono text-[11px] col-span-2">No news</div>
                 : data.news.map((n, i) => (
                   <div key={i} className="px-4 py-3 hover:bg-white/[0.02] transition-colors">
-                    <a href={n.url} target="_blank" rel="noopener noreferrer"
+                    <a href={safeUrl(n.url) || undefined} target="_blank" rel="noopener noreferrer"
                       className="text-[12px] text-slate-300 hover:text-electric-300 font-medium leading-snug block mb-1 transition-colors">
                       {n.headline}
                     </a>
