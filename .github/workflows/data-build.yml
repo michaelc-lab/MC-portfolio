@@ -1,0 +1,740 @@
+# MC Portfolio — data build, stage 1 (runs on GitHub's servers, free). Takes ~10–15 minutes.
+# Run it: GitHub → Actions → "Data build" → Run workflow.
+# Writes data/fundamentals.json (public SEC + market data, nothing personal) and reports/data-build.md.
+name: Data build
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build data
+        env:
+          SEC_UA: ${{ vars.SEC_UA }}
+        run: |
+          cat > /tmp/market_list.txt <<'LISTEOF'
+          A
+          AAPL
+          ABBV
+          ABNB
+          ABT
+          ACGL
+          ACN
+          ADBE
+          ADI
+          ADM
+          ADP
+          ADSK
+          AEE
+          AEP
+          AES
+          AFL
+          AIG
+          AIZ
+          AJG
+          AKAM
+          ALAB
+          ALB
+          ALGN
+          ALL
+          ALLE
+          ALNY
+          AMAT
+          AMCR
+          AMD
+          AME
+          AMGN
+          AMP
+          AMT
+          AMZN
+          ANET
+          AON
+          AOS
+          APA
+          APD
+          APH
+          APO
+          APP
+          APTV
+          ARE
+          ARES
+          ARM
+          ASML
+          ATO
+          AVGO
+          AVY
+          AWK
+          AXON
+          AXP
+          AZO
+          BA
+          BAC
+          BALL
+          BAX
+          BBY
+          BDX
+          BE
+          BEN
+          BF.B
+          BG
+          BIIB
+          BKNG
+          BKR
+          BLK
+          BMY
+          BNY
+          BR
+          BRK.B
+          BRO
+          BSX
+          BX
+          BXP
+          C
+          CAH
+          CARR
+          CASY
+          CAT
+          CB
+          CBOE
+          CBRE
+          CCEP
+          CCI
+          CCL
+          CDNS
+          CDW
+          CEG
+          CF
+          CFG
+          CHD
+          CHRW
+          CHTR
+          CI
+          CIEN
+          CINF
+          CL
+          CLX
+          CMCSA
+          CME
+          CMG
+          CMI
+          CMS
+          CNC
+          CNP
+          COF
+          COHR
+          COIN
+          COO
+          COP
+          COR
+          COST
+          CPAY
+          CPRT
+          CPT
+          CRH
+          CRL
+          CRM
+          CRWD
+          CRWV
+          CSCO
+          CSGP
+          CSX
+          CTAS
+          CTSH
+          CVNA
+          CVS
+          CVX
+          D
+          DAL
+          DASH
+          DD
+          DDOG
+          DE
+          DECK
+          DELL
+          DG
+          DGX
+          DHI
+          DHR
+          DIS
+          DLR
+          DLTR
+          DOC
+          DOV
+          DOW
+          DPZ
+          DRI
+          DTE
+          DUK
+          DVA
+          DVN
+          DXCM
+          EA
+          EBAY
+          ECHO
+          ECL
+          ED
+          EFX
+          EG
+          EIX
+          EL
+          ELV
+          EME
+          EMR
+          EOG
+          EQIX
+          EQT
+          ERIE
+          ES
+          ESS
+          ETN
+          ETR
+          EVRG
+          EW
+          EXC
+          EXE
+          EXPD
+          EXPE
+          EXR
+          F
+          FANG
+          FAST
+          FCX
+          FDS
+          FDX
+          FDXF
+          FE
+          FER
+          FERG
+          FFIV
+          FICO
+          FIS
+          FISV
+          FITB
+          FIX
+          FLEX
+          FOX
+          FOXA
+          FRT
+          FSLR
+          FTNT
+          FTV
+          GD
+          GDDY
+          GE
+          GEHC
+          GEN
+          GEV
+          GILD
+          GIS
+          GL
+          GLW
+          GM
+          GNRC
+          GOOG
+          GOOGL
+          GPC
+          GPN
+          GRMN
+          GS
+          GWW
+          HAL
+          HAS
+          HBAN
+          HCA
+          HD
+          HIG
+          HII
+          HLT
+          HON
+          HONA
+          HOOD
+          HPE
+          HPQ
+          HRL
+          HSIC
+          HST
+          HSY
+          HUBB
+          HUM
+          HWM
+          IBKR
+          IBM
+          ICE
+          IDXX
+          IEX
+          IFF
+          ILMN
+          INCY
+          INTC
+          INTU
+          INVH
+          IP
+          IQV
+          IR
+          IRM
+          ISRG
+          IT
+          ITW
+          IVZ
+          J
+          JBHT
+          JBL
+          JCI
+          JKHY
+          JNJ
+          JPM
+          KDP
+          KEY
+          KEYS
+          KHC
+          KIM
+          KKR
+          KLAC
+          KMB
+          KMI
+          KO
+          KR
+          KVUE
+          L
+          LDOS
+          LEN
+          LH
+          LHX
+          LII
+          LIN
+          LITE
+          LLY
+          LMT
+          LNT
+          LOW
+          LRCX
+          LULU
+          LUV
+          LVS
+          LYB
+          LYV
+          MA
+          MAA
+          MAR
+          MAS
+          MCD
+          MCHP
+          MCK
+          MCO
+          MDLZ
+          MDT
+          MELI
+          MET
+          META
+          MGM
+          MKC
+          MLM
+          MMM
+          MNST
+          MO
+          MOS
+          MPC
+          MPWR
+          MRK
+          MRNA
+          MRSH
+          MRVL
+          MS
+          MSCI
+          MSFT
+          MSI
+          MSTR
+          MTB
+          MTD
+          MU
+          NBIS
+          NCLH
+          NDAQ
+          NDSN
+          NEE
+          NEM
+          NFLX
+          NI
+          NKE
+          NOC
+          NOW
+          NRG
+          NSC
+          NTAP
+          NTRS
+          NUE
+          NVDA
+          NVR
+          NWS
+          NWSA
+          NXPI
+          O
+          ODFL
+          OKE
+          OMC
+          ON
+          ORCL
+          ORLY
+          OTIS
+          OXY
+          P
+          PANW
+          PAYX
+          PCAR
+          PCG
+          PDD
+          PEG
+          PEP
+          PFE
+          PFG
+          PG
+          PGR
+          PH
+          PHM
+          PKG
+          PLD
+          PLTR
+          PM
+          PNC
+          PNR
+          PNW
+          PODD
+          PPG
+          PPL
+          PRU
+          PSA
+          PSX
+          PTC
+          PWR
+          PYPL
+          Q
+          QCOM
+          RCL
+          RDDT
+          REG
+          REGN
+          RF
+          RJF
+          RKLB
+          RL
+          RMD
+          ROK
+          ROL
+          ROP
+          ROST
+          RSG
+          RTX
+          RVTY
+          SBAC
+          SBUX
+          SCHW
+          SHOP
+          SHW
+          SJM
+          SKYD
+          SLB
+          SMCI
+          SNA
+          SNDK
+          SNPS
+          SO
+          SOLV
+          SPG
+          SPGI
+          SRE
+          STE
+          STLD
+          STT
+          STX
+          STZ
+          SW
+          SWK
+          SWKS
+          SYF
+          SYK
+          SYY
+          T
+          TDG
+          TDY
+          TECH
+          TEL
+          TER
+          TFC
+          TGT
+          TJX
+          TKO
+          TMO
+          TMUS
+          TPL
+          TPR
+          TRGP
+          TRI
+          TRMB
+          TROW
+          TRV
+          TSCO
+          TSLA
+          TSN
+          TT
+          TTWO
+          TWLO
+          TXN
+          TXT
+          TYL
+          UAL
+          UBER
+          UDR
+          UHS
+          ULTA
+          UNH
+          UNP
+          UPS
+          URI
+          USB
+          V
+          VEEV
+          VICI
+          VLO
+          VLTO
+          VMC
+          VMRK
+          VRSK
+          VRSN
+          VRT
+          VRTX
+          VST
+          VTR
+          VTRS
+          VYLR
+          VZ
+          WAB
+          WAT
+          WBD
+          WDAY
+          WDC
+          WEC
+          WELL
+          WFC
+          WM
+          WMB
+          WMT
+          WRB
+          WSM
+          WST
+          WTW
+          WY
+          WYNN
+          XEL
+          XOM
+          XYL
+          XYZ
+          YUM
+          ZBH
+          ZBRA
+          ZTS
+          LISTEOF
+          python3 - /tmp/market_list.txt <<'PYEOF'
+          """MC Portfolio — nightly data build, stage 1 (runs on GitHub Actions; free, public data only).
+          
+          Builds data/fundamentals.json: SEC financials for EVERY company filing with the SEC (so each stock can be compared
+          with its real peers), plus today's price, market value and industry from Nasdaq's stock list, plus 1-year price
+          history summaries for the S&P 500 + Nasdaq-100. Writes reports/data-build.md saying what worked.
+          Contains no personal data: the same file for everyone, built only from public sources.
+          """
+          import datetime as dt
+          import json
+          import math
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+          
+          UA_SEC = os.environ.get("SEC_UA") or "MC-Portfolio personal research admin@mc-portfolio.example"
+          UA_WEB = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+          MARKET_FILE = sys.argv[1] if len(sys.argv) > 1 else "market_list.txt"
+          NOW = lambda: dt.datetime.now(dt.timezone.utc)
+          REPORT, RESULTS = [], {}
+          YEARS = [NOW().year - 1, NOW().year - 2, NOW().year - 3]      # last 3 complete calendar years
+          
+          # concept → list of SEC (taxonomy, tag, unit) tried in order; "I" = balance-sheet date, "D" = full-year amount
+          CONCEPTS = {
+              "revenue":   ("D", [("us-gaap", "Revenues", "USD"), ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax", "USD"), ("us-gaap", "SalesRevenueNet", "USD")]),
+              "cogs":      ("D", [("us-gaap", "CostOfRevenue", "USD"), ("us-gaap", "CostOfGoodsAndServicesSold", "USD")]),
+              "gross":     ("D", [("us-gaap", "GrossProfit", "USD")]),
+              "opIncome":  ("D", [("us-gaap", "OperatingIncomeLoss", "USD")]),
+              "netIncome": ("D", [("us-gaap", "NetIncomeLoss", "USD")]),
+              "ocf":       ("D", [("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD")]),
+              "capex":     ("D", [("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD")]),
+              "interest":  ("D", [("us-gaap", "InterestExpense", "USD")]),
+              "assets":    ("I", [("us-gaap", "Assets", "USD")]),
+              "equity":    ("I", [("us-gaap", "StockholdersEquity", "USD")]),
+              "debtLT":    ("I", [("us-gaap", "LongTermDebtNoncurrent", "USD"), ("us-gaap", "LongTermDebt", "USD")]),
+              "debtST":    ("I", [("us-gaap", "DebtCurrent", "USD"), ("us-gaap", "LongTermDebtCurrent", "USD")]),
+              "cash":      ("I", [("us-gaap", "CashAndCashEquivalentsAtCarryingValue", "USD")]),
+              "shares":    ("I", [("dei", "EntityCommonStockSharesOutstanding", "shares"), ("us-gaap", "CommonStockSharesOutstanding", "shares")]),
+          }
+          
+          
+          def say(line=""):
+              print(line, flush=True)
+              REPORT.append(line)
+          
+          
+          def verdict(name, ok, detail):
+              RESULTS[name] = ok
+              say(f"| {name} | {'PASS' if ok else 'FAIL'} | {detail} |")
+          
+          
+          def get_json(url, sec=False, timeout=60, tries=3):
+              h = {"User-Agent": UA_SEC if sec else UA_WEB, "Accept": "application/json,*/*"}
+              if not sec:
+                  h.update({"Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/"})
+              for a in range(tries):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=timeout) as r:
+                          return r.status, json.loads(r.read().decode("utf-8", "replace"))
+                  except urllib.error.HTTPError as e:
+                      if e.code == 404:
+                          return 404, None
+                      code = e.code
+                  except Exception:
+                      code = 0
+                  time.sleep(2 + a * 3)
+              return code, None
+          
+          
+          def sec_frames():
+              """One SEC call per concept and year returns that number for every company at once."""
+              out, notes = {}, {}
+              for key, (kind, tags) in CONCEPTS.items():
+                  got = 0
+                  for y in YEARS:
+                      period = f"CY{y}Q4I" if kind == "I" else f"CY{y}"
+                      for tax, tag, unit in tags:
+                          st, d = get_json(f"https://data.sec.gov/api/xbrl/frames/{tax}/{tag}/{unit}/{period}.json", sec=True)
+                          time.sleep(0.15)                                   # SEC asks for ≤10 requests a second
+                          if st != 200 or not d:
+                              continue
+                          for row in d.get("data", []):
+                              c = out.setdefault(int(row["cik"]), {"name": row.get("entityName", "")})
+                              yr = c.setdefault(str(y), {})
+                              if key not in yr:                              # the first tag found wins
+                                  yr[key] = row["val"]
+                                  if y == YEARS[0]:
+                                      got += 1
+                  notes[key] = got
+              return out, notes
+          
+          
+          def nasdaq_list():
+              st, d = get_json("https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&download=true")
+              rows = ((d or {}).get("data") or {}).get("rows") or []
+              num = lambda s: float(str(s).replace("$", "").replace(",", "")) if str(s).replace("$", "").replace(",", "").replace(".", "", 1).isdigit() else None
+              return st, {r["symbol"].strip().upper().replace("/", "-").replace("^", "-P"): {
+                  "name": r.get("name", ""), "price": num(r.get("lastsale")), "mcap": num(r.get("marketCap")),
+                  "sector": r.get("sector") or "", "industry": r.get("industry") or "", "country": r.get("country") or ""} for r in rows if r.get("symbol")}
+          
+          
+          def price_summary(t):
+              """1 year of daily closes → 12-1 month momentum and yearly volatility (Nasdaq, not adjusted for dividends)."""
+              frm = (NOW() - dt.timedelta(days=400)).strftime("%Y-%m-%d")
+              st, d = get_json(f"https://api.nasdaq.com/api/quote/{t.replace('-', '.')}/historical?assetclass=stocks&fromdate={frm}&todate={NOW():%Y-%m-%d}&limit=9999", tries=2)
+              rows = (((d or {}).get("data") or {}).get("tradesTable") or {}).get("rows") or []
+              px = []
+              for r in rows:
+                  try:
+                      px.append((dt.datetime.strptime(r["date"], "%m/%d/%Y").date(), float(str(r["close"]).replace("$", "").replace(",", ""))))
+                  except Exception:
+                      pass
+              px.sort()
+              if len(px) < 230:
+                  return None
+              closes = [p for _, p in px]
+              rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes)) if closes[i - 1] > 0 and closes[i] > 0]
+              vol = (sum((r - sum(rets) / len(rets)) ** 2 for r in rets) / (len(rets) - 1)) ** 0.5 * math.sqrt(252)
+              end, start = closes[-22], closes[-252] if len(closes) >= 252 else closes[0]
+              return {"last": closes[-1], "lastDate": str(px[-1][0]), "mom12_1": round((end / start - 1) * 100, 2), "vol": round(vol * 100, 2), "days": len(closes)}
+          
+          
+          def main():
+              t0 = time.time()
+              say(f"# Data build — {NOW():%Y-%m-%d %H:%M} UTC")
+              say("")
+              say("| Step | Result | Detail |")
+              say("|---|---|---|")
+              st, tick = get_json("https://www.sec.gov/files/company_tickers.json", sec=True)
+              cik2t = {}
+              for v in (tick or {}).values():
+                  cik2t.setdefault(int(v["cik_str"]), []).append(v["ticker"].upper())
+              verdict("SEC ticker list", len(cik2t) > 5000, f"HTTP {st}, {len(cik2t)} companies")
+          
+              frames, notes = sec_frames()
+              with_rev = sum(1 for c in frames.values() if c.get(str(YEARS[0]), {}).get("revenue"))
+              verdict(f"SEC financials, all companies (years {YEARS[-1]}–{YEARS[0]})", with_rev > 3000,
+                      f"{len(frames)} companies; {YEARS[0]} values found — " + ", ".join(f"{k} {v}" for k, v in notes.items()))
+          
+              st, nas = nasdaq_list()
+              verdict("Nasdaq stock list (price, market value, industry)", len(nas) > 5000, f"HTTP {st}, {len(nas)} stocks, with industry: {sum(1 for v in nas.values() if v['industry'])}")
+          
+              companies, matched = {}, 0
+              for cik, c in frames.items():
+                  for t in cik2t.get(cik, []):
+                      t2 = t.replace(".", "-")
+                      row = {"cik": cik, "name": c["name"], "fin": {y: c[y] for y in map(str, YEARS) if y in c}}
+                      if t2 in nas:
+                          row.update({k: nas[t2][k] for k in ("price", "mcap", "sector", "industry", "country")})
+                          matched += 1
+                      companies[t2] = row
+              verdict("Companies with BOTH SEC financials and a live price", matched > 3000, f"{matched} tickers")
+          
+              market = [l.strip() for l in open(MARKET_FILE) if l.strip()]
+              prices, fails = {}, []
+              for i, t in enumerate(market):
+                  s = price_summary(t)
+                  if s:
+                      prices[t] = s
+                  else:
+                      fails.append(t)
+                  time.sleep(0.6)
+              verdict("1-year price history, S&P 500 + Nasdaq-100", len(prices) >= 0.95 * len(market),
+                      f"{len(prices)}/{len(market)}; missing: {', '.join(fails[:25]) or 'none'}{' …' if len(fails) > 25 else ''}")
+          
+              os.makedirs("data", exist_ok=True)
+              payload = {"asOf": NOW().strftime("%Y-%m-%d"), "years": YEARS, "companies": companies, "marketPrices": prices}
+              with open("data/fundamentals.json", "w") as f:
+                  json.dump(payload, f, separators=(",", ":"))
+              size = os.path.getsize("data/fundamentals.json") / 1e6
+              verdict("Data file written", size > 0.5, f"data/fundamentals.json, {size:.1f} MB")
+              say("")
+              say(f"**{sum(RESULTS.values())} of {len(RESULTS)} steps passed.** Took {(time.time() - t0) / 60:.0f} min.")
+              os.makedirs("reports", exist_ok=True)
+              with open("reports/data-build.md", "w") as f:
+                  f.write("\n".join(REPORT) + "\n")
+          
+          
+          if __name__ == "__main__":
+              main()
+          PYEOF
+      - name: Show the report on this page
+        if: always()
+        run: cat reports/data-build.md >> "$GITHUB_STEP_SUMMARY" || echo "no report" >> "$GITHUB_STEP_SUMMARY"
+      - name: Save to the repo
+        if: always()
+        run: |
+          git config user.name "data-build"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/fundamentals.json reports/data-build.md || exit 0
+          git commit -m "data-build report" || exit 0
+          for i in 1 2 3; do
+            git pull --rebase -X theirs origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1

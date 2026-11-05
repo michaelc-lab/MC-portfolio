@@ -182,11 +182,18 @@ jobs:
           if __name__ == "__main__":
               main()
           PYEOF
-      - name: Save report to the repo
+      - name: Show the report on this page
+        if: always()
+        run: cat reports/price-source-check.md >> "$GITHUB_STEP_SUMMARY" || echo "no report" >> "$GITHUB_STEP_SUMMARY"
+      - name: Save to the repo
+        if: always()
         run: |
           git config user.name "price-source-check"
           git config user.email "actions@users.noreply.github.com"
-          git add reports/price-source-check.md
-          git commit -m "Price source check report" || echo "nothing to commit"
-          git pull --rebase || true
-          git push
+          git add reports/price-source-check.md || exit 0
+          git commit -m "price-source-check report" || exit 0
+          for i in 1 2 3; do
+            git pull --rebase -X theirs origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
