@@ -1,0 +1,192 @@
+# MC Portfolio — free daily-price source check (runs on GitHub's servers, free). ~3 minutes.
+# Run it: GitHub → Actions → "Price source check" → Run workflow.
+# Writes its findings to reports/price-source-check.md in this repo (no secrets, no portfolio data).
+name: Price source check
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run checks
+        env:
+          TIINGO_KEY: ${{ secrets.TIINGO_KEY }}
+        run: |
+          mkdir -p reports
+          python3 - reports/price-source-check.md <<'PYEOF'
+          """MC Portfolio — free daily-price source check (runs on GitHub Actions, open internet).
+          
+          Question: which free source can give daily price history (a) for today's stocks, deep enough for a 2010+ test, and
+          (b) for stocks that no longer trade (delisted, acquired, failed) — needed so a 5-year test is not too optimistic.
+          No keys needed. TIINGO_KEY (optional repository secret) adds Tiingo. Writes reports/price-source-check.md.
+          """
+          import datetime as dt
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+          
+          OUT = sys.argv[1] if len(sys.argv) > 1 else "reports/price-source-check.md"
+          TIINGO_KEY = os.environ.get("TIINGO_KEY") or ""
+          BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+          NOW = lambda: dt.datetime.now(dt.timezone.utc)
+          REPORT, RESULTS = [], {}
+          # 20 current stocks: large, mid, small, and tickers with dots/dashes
+          CURRENT = ["AAPL", "MSFT", "NVDA", "JPM", "XOM", "KO", "BRK-B", "COST", "LLY", "TSLA",
+                     "PLTR", "SOFI", "RIVN", "CROX", "ETSY", "MARA", "AMC", "PLUG", "RKLB", "IONQ"]
+          # stocks that stopped trading: (ticker, name, what happened, last year traded)
+          GONE = [("TWTR", "Twitter", "taken private 2022", 2022), ("ATVI", "Activision", "acquired 2023", 2023),
+                  ("FRC", "First Republic", "failed 2023", 2023), ("SIVB", "SVB Financial", "failed 2023", 2023),
+                  ("CELG", "Celgene", "acquired 2019", 2019), ("XLNX", "Xilinx", "acquired 2022", 2022)]
+          
+          
+          def say(line=""):
+              print(line)
+              REPORT.append(line)
+          
+          
+          def get(url, headers=None, timeout=30):
+              h = {"User-Agent": BROWSER_UA, "Accept": "application/json,text/plain,*/*"}
+              h.update(headers or {})
+              t0 = time.time()
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=timeout) as r:
+                      return r.status, r.read().decode("utf-8", "replace"), time.time() - t0
+              except urllib.error.HTTPError as e:
+                  return e.code, "", time.time() - t0
+              except Exception as e:  # network error, timeout
+                  return 0, str(e)[:120], time.time() - t0
+          
+          
+          def verdict(name, ok, detail):
+              RESULTS[name] = ok
+              say(f"| {name} | {'PASS' if ok else 'FAIL'} | {detail} |")
+          
+          
+          # ── each source returns (first_date, last_date, n_days, has_adjusted) or None ──
+          def yahoo(t, since_year=2005):
+              p1 = int(dt.datetime(since_year, 1, 1, tzinfo=dt.timezone.utc).timestamp())
+              p2 = int(NOW().timestamp())
+              st, body, _ = get(f"https://query1.finance.yahoo.com/v8/finance/chart/{t}?period1={p1}&period2={p2}&interval=1d&events=split,div")
+              if st != 200 or not body:
+                  return None, st
+              try:
+                  res = json.loads(body)["chart"]["result"][0]
+                  ts = [x for x in (res.get("timestamp") or [])]
+                  closes = res["indicators"]["quote"][0].get("close") or []
+                  n = sum(1 for c in closes if c is not None)
+                  if not ts or not n:
+                      return None, st
+                  adj = bool(res["indicators"].get("adjclose"))
+                  d = lambda s: dt.datetime.fromtimestamp(s, dt.timezone.utc).date()
+                  return (d(ts[0]), d(ts[-1]), n, adj), st
+              except Exception:
+                  return None, st
+          
+          
+          def nasdaq(t, since_year=2005):
+              sym = t.replace("-", ".")
+              st, body, _ = get(f"https://api.nasdaq.com/api/quote/{sym}/historical?assetclass=stocks&fromdate={since_year}-01-01"
+                                f"&todate={NOW():%Y-%m-%d}&limit=9999", headers={"Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/"})
+              if st != 200 or not body:
+                  return None, st
+              try:
+                  rows = ((json.loads(body).get("data") or {}).get("tradesTable") or {}).get("rows") or []
+                  if not rows:
+                      return None, st
+                  ds = sorted(dt.datetime.strptime(r["date"], "%m/%d/%Y").date() for r in rows)
+                  return (ds[0], ds[-1], len(rows), False), st
+              except Exception:
+                  return None, st
+          
+          
+          def tiingo(t, since_year=2005):
+              st, body, _ = get(f"https://api.tiingo.com/tiingo/daily/{t}/prices?startDate={since_year}-01-01&token={TIINGO_KEY}")
+              if st != 200 or not body:
+                  return None, st
+              try:
+                  rows = json.loads(body)
+                  if not isinstance(rows, list) or not rows:
+                      return None, st
+                  return (rows[0]["date"][:10], rows[-1]["date"][:10], len(rows), "adjClose" in rows[0]), st
+              except Exception:
+                  return None, st
+          
+          
+          def check_source(name, fn, pause):
+              say(f"\n**{name}**\n")
+              say("| Check | Result | Detail |")
+              say("|---|---|---|")
+              # 1) depth for AAPL
+              r, st = fn("AAPL")
+              years = (r[1] - r[0]).days / 365.25 if r and hasattr(r[0], "year") else None
+              if r and years is None:
+                  years = (dt.date.fromisoformat(str(r[1])) - dt.date.fromisoformat(str(r[0]))).days / 365.25
+              verdict(f"{name}: history depth (AAPL)", bool(r) and years >= 15,
+                      f"HTTP {st}; " + (f"{r[0]} → {r[1]}, {r[2]} days, ~{years:.0f} years, split/dividend-adjusted series: {'yes' if r[3] else 'no'}" if r else "no data"))
+              time.sleep(pause)
+              # 2) coverage of 20 current stocks, and recency
+              got, stale, codes = [], [], []
+              for t in CURRENT:
+                  r, st = fn(t)
+                  codes.append(st)
+                  if r:
+                      got.append(t)
+                      if (NOW().date() - dt.date.fromisoformat(str(r[1]))).days > 5:
+                          stale.append(t)
+                  time.sleep(pause)
+              miss = [t for t in CURRENT if t not in got]
+              verdict(f"{name}: 20 current stocks", len(got) >= 19 and not stale,
+                      f"{len(got)}/20 returned; missing: {', '.join(miss) or 'none'}; not up to date: {', '.join(stale) or 'none'}; HTTP codes seen: {sorted(set(codes))}")
+              # 3) stocks that no longer trade
+              found = []
+              for t, nm, what, last in GONE:
+                  r, st = fn(t)
+                  end_y = int(str(r[1])[:4]) if r else 0
+                  ok = bool(r) and last - 1 <= end_y <= last              # its history must END when it stopped trading
+                  note = 'yes, to ' + str(r[1]) if ok else ('no — the ticker now shows another company (data to ' + str(r[1]) + ')' if r and end_y > last else 'no')
+                  found.append(f"{nm} ({what}): {note}")
+                  time.sleep(pause)
+              n_ok = sum(1 for f in found if ": yes" in f)
+              verdict(f"{name}: stocks that no longer trade", n_ok >= 4, f"{n_ok}/{len(GONE)} — " + "; ".join(found))
+          
+          
+          def main():
+              say(f"# Price source check — {NOW():%Y-%m-%d %H:%M} UTC")
+              say("")
+              say("Measured live from GitHub's servers. Needed: 15+ years of daily prices for today's stocks AND for stocks that "
+                  "stopped trading (so a history test is not flattered by only counting survivors).")
+              check_source("Yahoo Finance (no key)", yahoo, 1.0)
+              check_source("Nasdaq.com (no key)", nasdaq, 1.5)
+              if TIINGO_KEY:
+                  check_source("Tiingo (free account key)", tiingo, 1.0)
+              else:
+                  say("\n**Tiingo** — SKIPPED (add a TIINGO_KEY repository secret to test it)")
+              say("")
+              passed = sum(1 for v in RESULTS.values() if v)
+              say(f"**{passed} of {len(RESULTS)} checks passed.** Finished {NOW():%H:%M} UTC.")
+              os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
+              with open(OUT, "w") as f:
+                  f.write("\n".join(REPORT) + "\n")
+          
+          
+          if __name__ == "__main__":
+              main()
+          PYEOF
+      - name: Save report to the repo
+        run: |
+          git config user.name "price-source-check"
+          git config user.email "actions@users.noreply.github.com"
+          git add reports/price-source-check.md
+          git commit -m "Price source check report" || echo "nothing to commit"
+          git pull --rebase || true
+          git push
