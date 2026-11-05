@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { APPS_SCRIPT_URL, jsonp } from '../lib/api'
+import { APPS_SCRIPT_URL, jsonp, safeUrl } from '../lib/api'
 import { oddsLabel } from '../lib/odds'
 import { TrendingUp, TrendingDown, Zap, AlertTriangle, Calendar, Sparkles } from 'lucide-react'
 import { fmtPrice, fmtPct } from '../lib/utils'
@@ -390,17 +390,17 @@ function RadarDetails({ s, onAnalyze, onClose }) {
     <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-4 font-display">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <a href={s.url || undefined} target="_blank" rel="noopener noreferrer" className="text-[13px] text-slate-200 hover:text-white leading-snug">{s.headline}</a>
+          <a href={safeUrl(s.url) || undefined} target="_blank" rel="noopener noreferrer" className="text-[13px] text-slate-200 hover:text-white leading-snug">{s.headline}</a>
           <div className="text-[11px] text-slate-500 mt-1">{s.source}{s.time ? ' · ' + rdAgoLong(s.time) : ''}{s.sources > 1 ? ` · reported by ${s.sources} sources` : ''}</div>
         </div>
         <button onClick={onClose} aria-label="Close details" className="text-slate-500 hover:text-slate-300 text-[13px] flex-shrink-0">✕</button>
       </div>
       <div className="mt-3 space-y-1.5 text-[12px] text-slate-400">
         <div>{rdLinkPlain(s)}</div>
-        {s.sec && <div className="text-slate-400">The company also filed {/^8/.test(s.sec.form) ? 'an' : 'a'} <a href={s.sec.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.sec.form} on {s.sec.date}</a> — open it to see if it's related</div>}
+        {s.sec && <div className="text-slate-400">The company also filed {/^8/.test(s.sec.form) ? 'an' : 'a'} <a href={safeUrl(s.sec.url) || undefined} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.sec.form} on {s.sec.date}</a> — open it to see if it's related</div>}
         {s.aiOnly
           ? <div className="text-terminal-amber/90">AI reasoning: {s.aiReason || s.evidence}</div>
-          : s.evidence ? <div className="text-terminal-green/80">Evidence: {s.evidenceUrl ? <a href={s.evidenceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a> : s.evidence}</div> : null}
+          : s.evidence ? <div className="text-terminal-green/80">Evidence: {safeUrl(s.evidenceUrl) ? <a href={safeUrl(s.evidenceUrl)} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a> : s.evidence}</div> : null}
         {s.volRatio != null && s.volRatio >= 2 && <div>Trading at {s.volRatio}× its normal volume</div>}
         {s.role === 'target' && <div>This company is the target of a proposed acquisition</div>}
         {s.smallCap && <div>Small company — news can move it sharply in both directions</div>}
