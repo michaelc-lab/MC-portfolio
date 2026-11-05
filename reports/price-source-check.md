@@ -1,4 +1,4 @@
-# Price source check — 2026-11-05 16:54 UTC
+# Price source check — 2026-11-05 17:14 UTC
 
 Measured live from GitHub's servers. Needed: 15+ years of daily prices for today's stocks AND for stocks that stopped trading (so a history test is not flattered by only counting survivors).
 
@@ -18,6 +18,12 @@ Measured live from GitHub's servers. Needed: 15+ years of daily prices for today
 | Nasdaq.com (no key): 20 current stocks | PASS | 20/20 returned; missing: none; not up to date: none; HTTP codes seen: [200] |
 | Nasdaq.com (no key): stocks that no longer trade | FAIL | 0/6 — Twitter (taken private 2022): no; Activision (acquired 2023): no; First Republic (failed 2023): no; SVB Financial (failed 2023): no; Celgene (acquired 2019): no; Xilinx (acquired 2022): no |
 
-**Tiingo** — SKIPPED (add a TIINGO_KEY repository secret to test it)
+**Tiingo (free account key)**
 
-**1 of 6 checks passed.** Finished 16:56 UTC.
+| Check | Result | Detail |
+|---|---|---|
+| Tiingo (free account key): history depth (AAPL) | PASS | HTTP 200; 2005-01-03 → 2026-11-04, 5495 days, ~22 years, split/dividend-adjusted series: yes |
+| Tiingo (free account key): 20 current stocks | PASS | 20/20 returned; missing: none; not up to date: none; HTTP codes seen: [200] |
+| Tiingo (free account key): stocks that no longer trade | FAIL | 2/6 — Twitter (taken private 2022): yes, to 2022-10-28; Activision (acquired 2023): yes, to 2023-10-13; First Republic (failed 2023): no; SVB Financial (failed 2023): no; Celgene (acquired 2019): no; Xilinx (acquired 2022): no |
+
+**3 of 9 checks passed.** Finished 17:17 UTC.
