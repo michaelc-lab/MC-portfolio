@@ -1,15 +1,17 @@
-# MC Portfolio — data build, stage 1 (runs on GitHub's servers, free). Takes ~10–15 minutes.
-# Run it: GitHub → Actions → "Data build" → Run workflow.
-# Writes data/fundamentals.json (public SEC + market data, nothing personal) and reports/data-build.md.
+# MC Portfolio — data build, stage 1 (runs on GitHub's servers, free). Takes ~25 minutes.
+# Runs by itself every weekday night. To run it now: GitHub → Actions → "Data build" → Run workflow.
+# Writes data/fundamentals.json + data/scores.json (public SEC + market data, nothing personal) and reports/data-build.md.
 name: Data build
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 23 * * 1-5"      # every weekday night, after the US market closes (23:17 UTC = 01:17 Israel)
 permissions:
   contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -542,7 +544,7 @@ jobs:
           LISTEOF
           python3 - /tmp/market_list.txt <<'PYEOF'
           """MC Portfolio — nightly data build, stage 1 (runs on GitHub Actions; free, public data only).
-          
+
           Builds data/fundamentals.json: SEC financials for EVERY company filing with the SEC (so each stock can be compared
           with its real peers), plus today's price, market value and industry from Nasdaq's stock list, plus 1-year price
           history summaries for the S&P 500 + Nasdaq-100. Writes reports/data-build.md saying what worked.
@@ -556,21 +558,21 @@ jobs:
           import time
           import urllib.error
           import urllib.request
-          
+
           UA_SEC = os.environ.get("SEC_UA") or "MC-Portfolio personal research admin@mc-portfolio.example"
           UA_WEB = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
           MARKET_FILE = sys.argv[1] if len(sys.argv) > 1 else "market_list.txt"
           NOW = lambda: dt.datetime.now(dt.timezone.utc)
           REPORT, RESULTS = [], {}
           YEARS = [NOW().year - 1, NOW().year - 2, NOW().year - 3]      # last 3 complete calendar years
-          
+
           # concept → list of SEC (taxonomy, tag, unit) tried in order; "I" = balance-sheet date, "D" = full-year amount
           CONCEPTS = {
-              "revenue":   ("D", [("us-gaap", "Revenues", "USD"), ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax", "USD"), ("us-gaap", "SalesRevenueNet", "USD")]),
+              "revenue":   ("D", [("us-gaap", "Revenues", "USD"), ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax", "USD"), ("us-gaap", "RevenueFromContractWithCustomerIncludingAssessedTax", "USD"), ("us-gaap", "SalesRevenueNet", "USD")]),
               "cogs":      ("D", [("us-gaap", "CostOfRevenue", "USD"), ("us-gaap", "CostOfGoodsAndServicesSold", "USD")]),
               "gross":     ("D", [("us-gaap", "GrossProfit", "USD")]),
               "opIncome":  ("D", [("us-gaap", "OperatingIncomeLoss", "USD")]),
-              "netIncome": ("D", [("us-gaap", "NetIncomeLoss", "USD")]),
+              "netIncome": ("D", [("us-gaap", "NetIncomeLoss", "USD"), ("us-gaap", "ProfitLoss", "USD"), ("us-gaap", "NetIncomeLossAvailableToCommonStockholdersBasic", "USD")]),
               "ocf":       ("D", [("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD")]),
               "capex":     ("D", [("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD")]),
               "interest":  ("D", [("us-gaap", "InterestExpense", "USD")]),
@@ -581,18 +583,18 @@ jobs:
               "cash":      ("I", [("us-gaap", "CashAndCashEquivalentsAtCarryingValue", "USD")]),
               "shares":    ("I", [("dei", "EntityCommonStockSharesOutstanding", "shares"), ("us-gaap", "CommonStockSharesOutstanding", "shares")]),
           }
-          
-          
+
+
           def say(line=""):
               print(line, flush=True)
               REPORT.append(line)
-          
-          
+
+
           def verdict(name, ok, detail):
               RESULTS[name] = ok
               say(f"| {name} | {'PASS' if ok else 'FAIL'} | {detail} |")
-          
-          
+
+
           def get_json(url, sec=False, timeout=60, tries=3):
               h = {"User-Agent": UA_SEC if sec else UA_WEB, "Accept": "application/json,*/*"}
               if not sec:
@@ -609,8 +611,8 @@ jobs:
                       code = 0
                   time.sleep(2 + a * 3)
               return code, None
-          
-          
+
+
           def sec_frames():
               """One SEC call per concept and year returns that number for every company at once."""
               out, notes = {}, {}
@@ -632,8 +634,46 @@ jobs:
                                       got += 1
                   notes[key] = got
               return out, notes
-          
-          
+
+
+          KEY_FIELDS = ["revenue", "netIncome", "ocf", "assets", "equity", "shares", "opIncome"]
+
+
+          def fill_from_companyfacts(cik, c):
+              """A company's full SEC record: fills numbers the all-company snapshot missed (it uses calendar years;
+              companies whose year ends mid-year, or that use a less common label, can fall through)."""
+              st, d = get_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json", sec=True)
+              time.sleep(0.15)
+              if st != 200 or not d:
+                  return 0
+              facts, filled = d.get("facts", {}), 0
+              for key, (kind, tags) in CONCEPTS.items():
+                  for y in YEARS:
+                      yr = c.setdefault(str(y), {})
+                      if key in yr:
+                          continue
+                      for tax, tag, unit in tags:
+                          rows = (((facts.get(tax) or {}).get(tag) or {}).get("units") or {}).get(unit) or []
+                          best = None
+                          for r in rows:
+                              if not str(r.get("form", "")).startswith(("10-K", "20-F", "40-F")) or not str(r.get("end", "")).startswith(str(y)):
+                                  continue
+                              if kind == "D":
+                                  try:
+                                      days = (dt.date.fromisoformat(r["end"]) - dt.date.fromisoformat(r["start"])).days
+                                  except Exception:
+                                      continue
+                                  if not 330 <= days <= 400:
+                                      continue
+                              if best is None or (r["end"], r.get("filed", "")) > (best["end"], best.get("filed", "")):
+                                  best = r
+                          if best is not None:
+                              yr[key] = best["val"]
+                              filled += 1
+                              break
+              return filled
+
+
           def nasdaq_list():
               st, d = get_json("https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&download=true")
               rows = ((d or {}).get("data") or {}).get("rows") or []
@@ -641,8 +681,8 @@ jobs:
               return st, {r["symbol"].strip().upper().replace("/", "-").replace("^", "-P"): {
                   "name": r.get("name", ""), "price": num(r.get("lastsale")), "mcap": num(r.get("marketCap")),
                   "sector": r.get("sector") or "", "industry": r.get("industry") or "", "country": r.get("country") or ""} for r in rows if r.get("symbol")}
-          
-          
+
+
           def price_summary(t):
               """1 year of daily closes → 12-1 month momentum and yearly volatility (Nasdaq, not adjusted for dividends)."""
               frm = (NOW() - dt.timedelta(days=400)).strftime("%Y-%m-%d")
@@ -662,8 +702,8 @@ jobs:
               vol = (sum((r - sum(rets) / len(rets)) ** 2 for r in rets) / (len(rets) - 1)) ** 0.5 * math.sqrt(252)
               end, start = closes[-22], closes[-252] if len(closes) >= 252 else closes[0]
               return {"last": closes[-1], "lastDate": str(px[-1][0]), "mom12_1": round((end / start - 1) * 100, 2), "vol": round(vol * 100, 2), "days": len(closes)}
-          
-          
+
+
           def main():
               t0 = time.time()
               say(f"# Data build — {NOW():%Y-%m-%d %H:%M} UTC")
@@ -675,15 +715,24 @@ jobs:
               for v in (tick or {}).values():
                   cik2t.setdefault(int(v["cik_str"]), []).append(v["ticker"].upper())
               verdict("SEC ticker list", len(cik2t) > 5000, f"HTTP {st}, {len(cik2t)} companies")
-          
+
               frames, notes = sec_frames()
               with_rev = sum(1 for c in frames.values() if c.get(str(YEARS[0]), {}).get("revenue"))
               verdict(f"SEC financials, all companies (years {YEARS[-1]}–{YEARS[0]})", with_rev > 3000,
                       f"{len(frames)} companies; {YEARS[0]} values found — " + ", ".join(f"{k} {v}" for k, v in notes.items()))
-          
+
+              # fill gaps for the S&P 500 + Nasdaq-100 from each company's full record
+              market = [l.strip().replace(".", "-") for l in open(MARKET_FILE) if l.strip()]
+              t2cik = {t.replace(".", "-"): cik for cik, ts in cik2t.items() for t in ts}
+              gaps = [t for t in market if t in t2cik and any(k not in frames.get(t2cik[t], {}).get(str(YEARS[0]), {}) for k in KEY_FIELDS)]
+              nfill = sum(fill_from_companyfacts(t2cik[t], frames.setdefault(t2cik[t], {"name": t})) for t in gaps)
+              still = [t for t in market if t in t2cik and any(k not in frames.get(t2cik[t], {}).get(str(YEARS[0]), {}) for k in ("revenue", "netIncome", "assets"))]
+              verdict("Gaps filled from full company records (S&P 500 + Nasdaq-100)", len(still) <= 25,
+                      f"{len(gaps)} companies had gaps, {nfill} numbers filled; still missing revenue/profit/assets: {', '.join(still[:20]) or 'none'}{' …' if len(still) > 20 else ''}")
+
               st, nas = nasdaq_list()
               verdict("Nasdaq stock list (price, market value, industry)", len(nas) > 5000, f"HTTP {st}, {len(nas)} stocks, with industry: {sum(1 for v in nas.values() if v['industry'])}")
-          
+
               companies, matched = {}, 0
               for cik, c in frames.items():
                   for t in cik2t.get(cik, []):
@@ -694,19 +743,26 @@ jobs:
                           matched += 1
                       companies[t2] = row
               verdict("Companies with BOTH SEC financials and a live price", matched > 3000, f"{matched} tickers")
-          
-              market = [l.strip() for l in open(MARKET_FILE) if l.strip()]
+
               prices, fails = {}, []
-              for i, t in enumerate(market):
+              for t in market:
                   s = price_summary(t)
                   if s:
                       prices[t] = s
                   else:
                       fails.append(t)
                   time.sleep(0.6)
+              retry, fails = fails, []
+              for t in retry:                                                  # one slower second try for the ones that failed
+                  time.sleep(3)
+                  s = price_summary(t)
+                  if s:
+                      prices[t] = s
+                  else:
+                      fails.append(t)
               verdict("1-year price history, S&P 500 + Nasdaq-100", len(prices) >= 0.95 * len(market),
                       f"{len(prices)}/{len(market)}; missing: {', '.join(fails[:25]) or 'none'}{' …' if len(fails) > 25 else ''}")
-          
+
               os.makedirs("data", exist_ok=True)
               payload = {"asOf": NOW().strftime("%Y-%m-%d"), "years": YEARS, "companies": companies, "marketPrices": prices}
               with open("data/fundamentals.json", "w") as f:
@@ -718,11 +774,220 @@ jobs:
               os.makedirs("reports", exist_ok=True)
               with open("reports/data-build.md", "w") as f:
                   f.write("\n".join(REPORT) + "\n")
-          
-          
+
+
           if __name__ == "__main__":
               main()
           PYEOF
+          cat > /tmp/score_v1.py <<'PYEOF'
+          """MC stock score v1 — computed from data/fundamentals.json (public SEC + market data).
+
+          4 equal parts, each a percentile 0–100 vs similar companies (50% same size group × sector, 50% whole market):
+            Momentum  — 12-month return skipping the last month, divided by volatility (needs price history)
+            Quality   — gross profit / assets, return on equity, low debt, few new shares, cash backing earnings
+            Value     — earnings yield, free-cash-flow yield, operating income / enterprise value (book/price for financials)
+            Low risk  — lower 1-year volatility
+          Score = average of the available parts / 10. Labels: Strong ≥ 8 · Good stock — hold ≥ 6.5 · Average ≥ 4 · Weak.
+          No "sell" label until a point-in-time history test passes.
+          """
+          import json
+          import sys
+          from bisect import bisect_left, bisect_right
+
+          LABELS = [(8.0, "Strong"), (6.0, "Good stock — hold"), (3.0, "Average"), (0, "Weak")]   # on the 0–10 rank ruler
+
+
+          def num(x):
+              return x if isinstance(x, (int, float)) and x == x else None
+
+
+          def div(a, b):
+              a, b = num(a), num(b)
+              return a / b if a is not None and b not in (None, 0) else None
+
+
+          def size_of(mcap):
+              if mcap is None:
+                  return None
+              return "large" if mcap >= 10e9 else "mid" if mcap >= 2e9 else "small"
+
+
+          def klass(c, f):
+              sector = (c.get("sector") or "").lower()
+              if sector in ("finance", "real estate") or "bank" in (c.get("industry") or "").lower():
+                  return "Financial"
+              rev, ni, ocf = num(f.get("revenue")), num(f.get("netIncome")), num(f.get("ocf"))
+              if (rev is not None and rev < 50e6) or (ni is not None and ni < 0 and ocf is not None and ocf < 0):
+                  return "Speculative"
+              return "Regular"
+
+
+          def metrics(c, years):
+              y0, y1 = str(years[0]), str(years[1])
+              f, g = c["fin"].get(y0, {}), c["fin"].get(y1, {})
+              mcap, k = num(c.get("mcap")), None
+              k = klass(c, f)
+              assets, eq, ni = num(f.get("assets")), num(f.get("equity")), num(f.get("netIncome"))
+              gross = num(f.get("gross"))
+              if gross is None and num(f.get("revenue")) is not None and num(f.get("cogs")) is not None:
+                  gross = f["revenue"] - f["cogs"]
+              debt = (num(f.get("debtLT")) or 0) + (num(f.get("debtST")) or 0) if (f.get("debtLT") is not None or f.get("debtST") is not None) else None
+              eq_avg = (eq + num(g.get("equity"))) / 2 if eq is not None and num(g.get("equity")) is not None else eq
+              sh0, sh1 = num(f.get("shares")), num(g.get("shares"))
+              issuance = (sh0 / sh1 - 1) if sh0 and sh1 else None
+              ocf, capex = num(f.get("ocf")), num(f.get("capex"))
+              fcf = ocf - (capex or 0) if ocf is not None else None
+              ev = mcap + (debt or 0) - (num(f.get("cash")) or 0) if mcap else None
+              m = {
+                  # quality (higher = better)
+                  "gpa": div(gross, assets) if k != "Financial" else None,
+                  "roe": div(ni, eq_avg) if eq_avg and eq_avg > 0 else None,
+                  "lowDebt": -div(debt, assets) if debt is not None and assets and k != "Financial" else None,
+                  "lowIssuance": -issuance if issuance is not None and abs(issuance) < 1 else None,
+                  "cashBacked": -div(ni - ocf, assets) if ni is not None and ocf is not None and assets and k != "Financial" else None,
+                  # value (higher = cheaper)
+                  "earnYield": div(ni, mcap),
+                  "fcfYield": div(fcf, mcap) if k != "Financial" else None,
+                  "evYield": div(num(f.get("opIncome")), ev) if ev and ev > 0 and k != "Financial" else None,
+                  "bookYield": div(eq, mcap) if k == "Financial" else None,
+              }
+              raw = {"issuancePct": None if issuance is None else round(issuance * 100, 1), "debtToAssets": div(debt, assets),
+                     "runwayYears": div(num(f.get("cash")), -ocf) if ocf is not None and ocf < 0 else None,
+                     "interestCover": div(num(f.get("opIncome")), num(f.get("interest"))), "equity": eq,
+                     "accruals": div(ni - ocf, assets) if ni is not None and ocf is not None and assets else None}
+              return k, m, raw
+
+
+          PILLARS = {"quality": ["gpa", "roe", "lowDebt", "lowIssuance", "cashBacked"],
+                     "value": ["earnYield", "fcfYield", "evYield", "bookYield"],
+                     "momentum": ["momVol"], "lowRisk": ["lowVol"]}
+          MIN_N = {"quality": 2, "value": 1, "momentum": 1, "lowRisk": 1}
+          WORDS = {
+              "gpa": ("High gross profit for its size (assets)", "Low gross profit for its size (assets)"),
+              "roe": ("High return on shareholders' money", "Low return on shareholders' money"),
+              "lowDebt": ("Little debt", "Heavy debt"),
+              "lowIssuance": ("Few new shares issued (little dilution)", "Many new shares issued (dilution)"),
+              "cashBacked": ("Profits backed by real cash", "Profits not backed by cash"),
+              "earnYield": ("Cheap for what it earns", "Expensive for what it earns"),
+              "fcfYield": ("Cheap for the cash it generates", "Expensive for the cash it generates"),
+              "evYield": ("Cheap for its operating profit", "Expensive for its operating profit"),
+              "bookYield": ("Cheap vs its book value", "Expensive vs its book value"),
+              "momVol": ("Strong, steady rise over the past year", "Weak over the past year"),
+              "lowVol": ("Calmer price than most", "Very jumpy price"),
+          }
+
+
+          class Pct:
+              """percentile of a value inside a sorted reference list (0–100, ties → middle)."""
+              def __init__(self, values):
+                  self.v = sorted(values)
+
+              def __call__(self, x):
+                  n = len(self.v)
+                  if not n or x is None:
+                      return None
+                  lo, hi = bisect_left(self.v, x), bisect_right(self.v, x)
+                  return 100.0 * (lo + hi) / 2 / n
+
+
+          def build(data):
+              years, C, P = data["years"], data["companies"], data.get("marketPrices", {})
+              rows = {}
+              for t, c in C.items():
+                  if not c.get("mcap") or not c["fin"].get(str(years[0])):
+                      continue
+                  k, m, raw = metrics(c, years)
+                  p = P.get(t)
+                  if p and p.get("vol"):
+                      m["momVol"] = p["mom12_1"] / p["vol"]
+                      m["lowVol"] = -p["vol"]
+                  rows[t] = {"class": k, "size": size_of(c["mcap"]), "sector": c.get("sector") or "", "m": m, "raw": raw}
+              # reference groups: whole market and size × sector (back off to size if fewer than 20 peers)
+              keys = {m for r in rows.values() for m in r["m"]}
+              market = {k: Pct([r["m"][k] for r in rows.values() if r["m"].get(k) is not None]) for k in keys}
+              groups = {}
+              for t, r in rows.items():
+                  for g in ((r["size"], r["sector"]), (r["size"], None)):
+                      groups.setdefault(g, []).append(t)
+              gpct = {}
+
+              def group_pct(g, k):
+                  if (g, k) not in gpct:
+                      gpct[(g, k)] = Pct([rows[t]["m"][k] for t in groups.get(g, []) if rows[t]["m"].get(k) is not None])
+                  return gpct[(g, k)]
+
+              out = {}
+              for t, r in rows.items():
+                  pct = {}
+                  for k, x in r["m"].items():
+                      if x is None:
+                          continue
+                      g = (r["size"], r["sector"])
+                      ref = group_pct(g, k)
+                      if len(ref.v) < 20:
+                          g = (r["size"], None)
+                          ref = group_pct(g, k)
+                      pct[k] = 0.5 * ref(x) + 0.5 * market[k](x)
+                  pillars = {}
+                  for name, ks in PILLARS.items():
+                      vals = [pct[k] for k in ks if k in pct]
+                      pillars[name] = round(sum(vals) / len(vals), 1) if len(vals) >= MIN_N[name] else None
+                  have = [v for v in pillars.values() if v is not None]
+                  score = round(sum(have) / len(have) / 10, 2) if len(have) >= 2 else None
+                  ranked = sorted(pct.items(), key=lambda kv: kv[1])
+                  # a weakness is only said out loud when it is real, not just "below average in a strong group"
+                  if r["raw"]["accruals"] is not None and r["raw"]["accruals"] < 0.02:
+                      ranked = [kv for kv in ranked if not (kv[0] == "cashBacked" and kv[1] <= 30)]
+                  reasons = [("+", WORDS[k][0]) for k, v in reversed(ranked) if v >= 70][:2] + [("-", WORDS[k][1]) for k, v in ranked if v <= 30][:1]
+                  if len(reasons) < 3:
+                      reasons += [("+", WORDS[k][0]) for k, v in reversed(ranked) if v >= 60 and ("+", WORDS[k][0]) not in reasons][:3 - len(reasons)]
+                  flags = []
+                  raw = r["raw"]
+                  if raw["equity"] is not None and raw["equity"] < 0:
+                      flags.append("Negative shareholders' equity (owes more than it owns)")
+                  if raw["issuancePct"] is not None and raw["issuancePct"] > 10:
+                      flags.append(f"Share count up {raw['issuancePct']:.0f}% in a year (dilution)")
+                  if raw["interestCover"] is not None and 0 <= raw["interestCover"] < 1.5:
+                      flags.append("Operating profit barely covers interest")
+                  if raw["runwayYears"] is not None and raw["runwayYears"] < 1:
+                      flags.append("Burning cash: less than a year of cash left at this rate")
+                  out[t] = {"score": score, "nParts": len(have), "class": r["class"], "size": r["size"], "sector": r["sector"],
+                            "pillars": pillars, "reasons": reasons[:3], "flags": flags,
+                            "peers": len(groups.get((r["size"], r["sector"]), []))}
+              return out
+
+
+          def calibrate(out, market):
+              """Turn the raw average into a 0–10 rank inside the S&P 500 + Nasdaq-100 (only stocks with all 4 parts):
+              7.0 = better than 70% of that list. Every stock — market or not — is placed on the same ruler."""
+              ref = sorted(out[t]["score"] for t in market if t in out and out[t]["score"] is not None and out[t]["nParts"] == 4)
+              pct = Pct(ref)
+              for t, r in out.items():
+                  if r["score"] is None or not ref:
+                      r["label"] = None
+                      continue
+                  r["raw"] = r["score"]
+                  r["score"] = round(pct(r["score"]) / 10, 1)
+                  r["label"] = next(l for cut, l in LABELS if r["score"] >= cut)
+              return ref
+
+
+          if __name__ == "__main__":
+              data = json.load(open(sys.argv[1]))
+              res = build(data)
+              market = [l.strip().replace(".", "-") for l in open(sys.argv[3]) if l.strip()] if len(sys.argv) > 3 else list(data.get("marketPrices", {}))
+              ref = calibrate(res, market)
+              P = data.get("marketPrices", {})
+              refs = {"momVol": sorted(round(p["mom12_1"] / p["vol"], 4) for p in P.values() if p.get("vol")),
+                      "lowVol": sorted(-p["vol"] for p in P.values() if p.get("vol"))}
+              # for stocks outside the S&P 500 + Nasdaq-100, your Apps Script adds momentum and low risk from its own price
+              # history, using these two reference lists, then places the result on the same ruler
+              json.dump({"asOf": data["asOf"], "years": data["years"], "ruler": [round(x, 3) for x in ref], "refs": refs, "labels": LABELS,
+                         "scores": res}, open(sys.argv[2], "w"), separators=(",", ":"))
+              print("written", sys.argv[2])
+              print(len(res), "scored")
+          PYEOF
+          python3 /tmp/score_v1.py data/fundamentals.json data/scores.json /tmp/market_list.txt
       - name: Show the report on this page
         if: always()
         run: cat reports/data-build.md >> "$GITHUB_STEP_SUMMARY" || echo "no report" >> "$GITHUB_STEP_SUMMARY"
@@ -731,7 +996,7 @@ jobs:
         run: |
           git config user.name "data-build"
           git config user.email "actions@users.noreply.github.com"
-          git add data/fundamentals.json reports/data-build.md || exit 0
+          git add data/fundamentals.json data/scores.json reports/data-build.md || exit 0
           git commit -m "data-build report" || exit 0
           for i in 1 2 3; do
             git pull --rebase -X theirs origin main && git push origin HEAD:main && exit 0
