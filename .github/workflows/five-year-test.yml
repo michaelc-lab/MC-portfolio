@@ -1,0 +1,779 @@
+# MC Portfolio — 5-year test of the new score (runs on GitHub's servers, free).
+# Start it once: GitHub → Actions → "Five-year test" → Run workflow. After that it continues by itself every hour
+# (Tiingo's free plan allows only so many downloads per hour) until reports/backtest.md shows the results.
+# Uses the TIINGO_KEY repository secret. Public data only; nothing personal.
+name: Five-year test
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 * * * *"        # every hour; does nothing once the test is finished
+permissions:
+  contents: write
+concurrency:
+  group: five-year-test
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - name: Finished already?
+        id: done
+        run: if [ -f data/bt/DONE ]; then echo "done=1" >> "$GITHUB_OUTPUT"; echo "Already finished." >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/setup-python@v5
+        if: steps.done.outputs.done != '1'
+        with:
+          python-version: "3.12"
+      - name: Run the test (or continue downloading)
+        if: steps.done.outputs.done != '1'
+        env:
+          TIINGO_KEY: ${{ secrets.TIINGO_KEY }}
+          SEC_UA: ${{ vars.SEC_UA }}
+        run: |
+          pip install --quiet pandas lxml
+          mkdir -p /tmp/bt
+          cat > /tmp/bt/score_v1.py <<'PYEOF'
+          """MC stock score v1 — computed from data/fundamentals.json (public SEC + market data).
+
+          4 equal parts, each a percentile 0–100 vs similar companies (50% same size group × sector, 50% whole market):
+            Momentum  — 12-month return skipping the last month, divided by volatility (needs price history)
+            Quality   — gross profit / assets, return on equity, low debt, few new shares, cash backing earnings
+            Value     — earnings yield, free-cash-flow yield, operating income / enterprise value (book/price for financials)
+            Low risk  — lower 1-year volatility
+          Score = average of the available parts / 10. Labels: Strong ≥ 8 · Good stock — hold ≥ 6.5 · Average ≥ 4 · Weak.
+          No "sell" label until a point-in-time history test passes.
+          """
+          import json
+          import sys
+          from bisect import bisect_left, bisect_right
+
+          LABELS = [(8.0, "Strong"), (6.0, "Good stock — hold"), (3.0, "Average"), (0, "Weak")]   # on the 0–10 rank ruler
+
+
+          def num(x):
+              return x if isinstance(x, (int, float)) and x == x else None
+
+
+          def div(a, b):
+              a, b = num(a), num(b)
+              return a / b if a is not None and b not in (None, 0) else None
+
+
+          def size_of(mcap):
+              if mcap is None:
+                  return None
+              return "large" if mcap >= 10e9 else "mid" if mcap >= 2e9 else "small"
+
+
+          def klass(c, f):
+              sector = (c.get("sector") or "").lower()
+              if sector in ("finance", "financials", "real estate") or "bank" in (c.get("industry") or "").lower():
+                  return "Financial"
+              rev, ni, ocf = num(f.get("revenue")), num(f.get("netIncome")), num(f.get("ocf"))
+              if (rev is not None and rev < 50e6) or (ni is not None and ni < 0 and ocf is not None and ocf < 0):
+                  return "Speculative"
+              return "Regular"
+
+
+          def metrics(c, years):
+              y0, y1 = str(years[0]), str(years[1])
+              f, g = c["fin"].get(y0, {}), c["fin"].get(y1, {})
+              mcap, k = num(c.get("mcap")), None
+              k = klass(c, f)
+              assets, eq, ni = num(f.get("assets")), num(f.get("equity")), num(f.get("netIncome"))
+              gross = num(f.get("gross"))
+              if gross is None and num(f.get("revenue")) is not None and num(f.get("cogs")) is not None:
+                  gross = f["revenue"] - f["cogs"]
+              debt = (num(f.get("debtLT")) or 0) + (num(f.get("debtST")) or 0) if (f.get("debtLT") is not None or f.get("debtST") is not None) else None
+              eq_avg = (eq + num(g.get("equity"))) / 2 if eq is not None and num(g.get("equity")) is not None else eq
+              sh0, sh1 = num(f.get("shares")), num(g.get("shares"))
+              issuance = (sh0 / sh1 - 1) if sh0 and sh1 else None
+              ocf, capex = num(f.get("ocf")), num(f.get("capex"))
+              fcf = ocf - (capex or 0) if ocf is not None else None
+              ev = mcap + (debt or 0) - (num(f.get("cash")) or 0) if mcap else None
+              m = {
+                  # quality (higher = better)
+                  "gpa": div(gross, assets) if k != "Financial" else None,
+                  "roe": div(ni, eq_avg) if eq_avg and eq_avg > 0 else None,
+                  "lowDebt": -div(debt, assets) if debt is not None and assets and k != "Financial" else None,
+                  "lowIssuance": -issuance if issuance is not None and abs(issuance) < 1 else None,
+                  "cashBacked": -div(ni - ocf, assets) if ni is not None and ocf is not None and assets and k != "Financial" else None,
+                  # value (higher = cheaper)
+                  "earnYield": div(ni, mcap),
+                  "fcfYield": div(fcf, mcap) if k != "Financial" else None,
+                  "evYield": div(num(f.get("opIncome")), ev) if ev and ev > 0 and k != "Financial" else None,
+                  "bookYield": div(eq, mcap) if k == "Financial" else None,
+              }
+              raw = {"issuancePct": None if issuance is None else round(issuance * 100, 1), "debtToAssets": div(debt, assets),
+                     "runwayYears": div(num(f.get("cash")), -ocf) if ocf is not None and ocf < 0 else None,
+                     "interestCover": div(num(f.get("opIncome")), num(f.get("interest"))), "equity": eq,
+                     "accruals": div(ni - ocf, assets) if ni is not None and ocf is not None and assets else None}
+              return k, m, raw
+
+
+          PILLARS = {"quality": ["gpa", "roe", "lowDebt", "lowIssuance", "cashBacked"],
+                     "value": ["earnYield", "fcfYield", "evYield", "bookYield"],
+                     "momentum": ["momVol"], "lowRisk": ["lowVol"]}
+          MIN_N = {"quality": 2, "value": 1, "momentum": 1, "lowRisk": 1}
+          WORDS = {
+              "gpa": ("High gross profit for its size (assets)", "Low gross profit for its size (assets)"),
+              "roe": ("High return on shareholders' money", "Low return on shareholders' money"),
+              "lowDebt": ("Little debt", "Heavy debt"),
+              "lowIssuance": ("Few new shares issued (little dilution)", "Many new shares issued (dilution)"),
+              "cashBacked": ("Profits backed by real cash", "Profits not backed by cash"),
+              "earnYield": ("Cheap for what it earns", "Expensive for what it earns"),
+              "fcfYield": ("Cheap for the cash it generates", "Expensive for the cash it generates"),
+              "evYield": ("Cheap for its operating profit", "Expensive for its operating profit"),
+              "bookYield": ("Cheap vs its book value", "Expensive vs its book value"),
+              "momVol": ("Strong, steady rise over the past year", "Weak over the past year"),
+              "lowVol": ("Calmer price than most", "Very jumpy price"),
+          }
+
+
+          class Pct:
+              """percentile of a value inside a sorted reference list (0–100, ties → middle)."""
+              def __init__(self, values):
+                  self.v = sorted(values)
+
+              def __call__(self, x):
+                  n = len(self.v)
+                  if not n or x is None:
+                      return None
+                  lo, hi = bisect_left(self.v, x), bisect_right(self.v, x)
+                  return 100.0 * (lo + hi) / 2 / n
+
+
+          def build(data):
+              years, C, P = data["years"], data["companies"], data.get("marketPrices", {})
+              rows = {}
+              for t, c in C.items():
+                  if not c.get("mcap") or not c["fin"].get(str(years[0])):
+                      continue
+                  k, m, raw = metrics(c, years)
+                  p = P.get(t)
+                  if p and p.get("vol"):
+                      m["momVol"] = p["mom12_1"] / p["vol"]
+                      m["lowVol"] = -p["vol"]
+                  rows[t] = {"class": k, "size": size_of(c["mcap"]), "sector": c.get("sector") or "", "m": m, "raw": raw}
+              # reference groups: whole market and size × sector (back off to size if fewer than 20 peers)
+              keys = {m for r in rows.values() for m in r["m"]}
+              market = {k: Pct([r["m"][k] for r in rows.values() if r["m"].get(k) is not None]) for k in keys}
+              groups = {}
+              for t, r in rows.items():
+                  for g in ((r["size"], r["sector"]), (r["size"], None)):
+                      groups.setdefault(g, []).append(t)
+              gpct = {}
+
+              def group_pct(g, k):
+                  if (g, k) not in gpct:
+                      gpct[(g, k)] = Pct([rows[t]["m"][k] for t in groups.get(g, []) if rows[t]["m"].get(k) is not None])
+                  return gpct[(g, k)]
+
+              out = {}
+              for t, r in rows.items():
+                  pct = {}
+                  for k, x in r["m"].items():
+                      if x is None:
+                          continue
+                      g = (r["size"], r["sector"])
+                      ref = group_pct(g, k)
+                      if len(ref.v) < 20:
+                          g = (r["size"], None)
+                          ref = group_pct(g, k)
+                      pct[k] = 0.5 * ref(x) + 0.5 * market[k](x)
+                  pillars = {}
+                  for name, ks in PILLARS.items():
+                      vals = [pct[k] for k in ks if k in pct]
+                      pillars[name] = round(sum(vals) / len(vals), 1) if len(vals) >= MIN_N[name] else None
+                  have = [v for v in pillars.values() if v is not None]
+                  score = round(sum(have) / len(have) / 10, 2) if len(have) >= 2 else None
+                  ranked = sorted(pct.items(), key=lambda kv: kv[1])
+                  # a weakness is only said out loud when it is real, not just "below average in a strong group"
+                  if r["raw"]["accruals"] is not None and r["raw"]["accruals"] < 0.02:
+                      ranked = [kv for kv in ranked if not (kv[0] == "cashBacked" and kv[1] <= 30)]
+                  reasons = [("+", WORDS[k][0]) for k, v in reversed(ranked) if v >= 70][:2] + [("-", WORDS[k][1]) for k, v in ranked if v <= 30][:1]
+                  if len(reasons) < 3:
+                      reasons += [("+", WORDS[k][0]) for k, v in reversed(ranked) if v >= 60 and ("+", WORDS[k][0]) not in reasons][:3 - len(reasons)]
+                  flags = []
+                  raw = r["raw"]
+                  if raw["equity"] is not None and raw["equity"] < 0:
+                      flags.append("Negative shareholders' equity (owes more than it owns)")
+                  if raw["issuancePct"] is not None and raw["issuancePct"] > 10:
+                      flags.append(f"Share count up {raw['issuancePct']:.0f}% in a year (dilution)")
+                  if raw["interestCover"] is not None and 0 <= raw["interestCover"] < 1.5:
+                      flags.append("Operating profit barely covers interest")
+                  if raw["runwayYears"] is not None and raw["runwayYears"] < 1:
+                      flags.append("Burning cash: less than a year of cash left at this rate")
+                  out[t] = {"score": score, "nParts": len(have), "class": r["class"], "size": r["size"], "sector": r["sector"],
+                            "pillars": pillars, "reasons": reasons[:3], "flags": flags,
+                            "peers": len(groups.get((r["size"], r["sector"]), []))}
+              return out
+
+
+          def calibrate(out, market):
+              """Turn the raw average into a 0–10 rank inside the S&P 500 + Nasdaq-100 (only stocks with all 4 parts):
+              7.0 = better than 70% of that list. Every stock — market or not — is placed on the same ruler."""
+              ref = sorted(out[t]["score"] for t in market if t in out and out[t]["score"] is not None and out[t]["nParts"] == 4)
+              pct = Pct(ref)
+              for t, r in out.items():
+                  if r["score"] is None or not ref:
+                      r["label"] = None
+                      continue
+                  r["raw"] = r["score"]
+                  r["score"] = round(pct(r["score"]) / 10, 1)
+                  r["label"] = next(l for cut, l in LABELS if r["score"] >= cut)
+              return ref
+
+
+          if __name__ == "__main__":
+              data = json.load(open(sys.argv[1]))
+              res = build(data)
+              market = [l.strip().replace(".", "-") for l in open(sys.argv[3]) if l.strip()] if len(sys.argv) > 3 else list(data.get("marketPrices", {}))
+              ref = calibrate(res, market)
+              P = data.get("marketPrices", {})
+              refs = {"momVol": sorted(round(p["mom12_1"] / p["vol"], 4) for p in P.values() if p.get("vol")),
+                      "lowVol": sorted(-p["vol"] for p in P.values() if p.get("vol"))}
+              # for stocks outside the S&P 500 + Nasdaq-100, your Apps Script adds momentum and low risk from its own price
+              # history, using these two reference lists, then places the result on the same ruler
+              json.dump({"asOf": data["asOf"], "years": data["years"], "ruler": [round(x, 3) for x in ref], "refs": refs, "labels": LABELS,
+                         "scores": res}, open(sys.argv[2], "w"), separators=(",", ":"))
+              print("written", sys.argv[2])
+              print(len(res), "scored")
+          PYEOF
+          cat > /tmp/bt/backtest.py <<'PYEOF'
+          """MC Portfolio — 5-year test of the new score (runs on GitHub Actions, resumes itself every hour until done).
+
+          Month by month over the last 5 years, it scores every S&P 500 member OF THAT MONTH using only what was public then
+          (SEC annual reports already filed by that date, prices up to that day) with the SAME code as the live score
+          (score_v1.py), then measures what those stocks did over the following month.
+          Downloads are kept in data/bt/ so each hourly run continues where the last one stopped (Tiingo's free plan limits
+          requests per hour). When everything is in, it writes reports/backtest.md and stops working.
+          """
+          import datetime as dt
+          import gzip
+          import io
+          import json
+          import math
+          import os
+          import re
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+          import score_v1  # the live scoring code, unchanged
+
+          TIINGO = os.environ.get("TIINGO_KEY") or ""
+          UA_SEC = os.environ.get("SEC_UA") or "MC-Portfolio personal research admin@mc-portfolio.example"
+          UA_WEB = "MC-Portfolio-research/1.0 (GitHub Actions; personal, non-commercial)"
+          BT = "data/bt"
+          START_PRICES = "2020-08-01"
+          TEST_MONTHS = 60
+          T0 = time.time()
+          TIME_BUDGET = float(os.environ.get("BT_MINUTES") or 300) * 60      # stop downloading before GitHub's 6-hour limit
+          LOG = []
+
+          # same SEC concepts as the nightly build; "I" = balance-sheet date, "D" = full-year amount
+          CONCEPTS = {
+              "revenue":   ("D", ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet"]),
+              "cogs":      ("D", ["CostOfRevenue", "CostOfGoodsAndServicesSold"]),
+              "gross":     ("D", ["GrossProfit"]),
+              "opIncome":  ("D", ["OperatingIncomeLoss"]),
+              "netIncome": ("D", ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"]),
+              "ocf":       ("D", ["NetCashProvidedByUsedInOperatingActivities"]),
+              "capex":     ("D", ["PaymentsToAcquirePropertyPlantAndEquipment"]),
+              "interest":  ("D", ["InterestExpense"]),
+              "assets":    ("I", ["Assets"]),
+              "equity":    ("I", ["StockholdersEquity"]),
+              "debtLT":    ("I", ["LongTermDebtNoncurrent", "LongTermDebt"]),
+              "debtST":    ("I", ["DebtCurrent", "LongTermDebtCurrent"]),
+              "cash":      ("I", ["CashAndCashEquivalentsAtCarryingValue"]),
+          }
+          ANNUAL = ("10-K", "20-F", "40-F")
+
+
+          def log(m):
+              print(m, flush=True)
+              LOG.append(m)
+
+
+          def fetch(url, sec=False, tries=3, timeout=90):
+              h = {"User-Agent": UA_SEC if sec else UA_WEB, "Accept-Encoding": "gzip"}
+              last = 0
+              for a in range(tries):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=timeout) as r:
+                          b = r.read()
+                          if r.headers.get("Content-Encoding") == "gzip":
+                              b = gzip.decompress(b)
+                          return r.status, b.decode("utf-8", "replace")
+                  except urllib.error.HTTPError as e:
+                      last = e.code
+                      body = ""
+                      try:
+                          body = e.read().decode("utf-8", "replace")[:300]
+                      except Exception:
+                          pass
+                      if e.code in (400, 401, 403, 404):
+                          return e.code, body
+                  except Exception:
+                      last = 0
+                  time.sleep(3 + 5 * a)
+              return last, ""
+
+
+          def gz_write(path, obj):
+              os.makedirs(os.path.dirname(path), exist_ok=True)
+              with gzip.open(path, "wt") as f:
+                  json.dump(obj, f, separators=(",", ":"))
+
+
+          def gz_read(path):
+              with gzip.open(path, "rt") as f:
+                  return json.load(f)
+
+
+          def norm_t(t):
+              return str(t).strip().upper().replace(".", "-")
+
+
+          def norm_name(s):
+              s = re.sub(r"[^a-z0-9 ]", " ", str(s).lower().replace("&", " and "))
+              drop = {"inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "plc", "the", "holdings", "holding", "group", "sa", "nv", "llc", "lp"}
+              return " ".join(w for w in s.split() if w not in drop)
+
+
+          # ── 1. S&P 500 membership month by month (current list + every change since, from Wikipedia) ──────────────────
+          def membership():
+              import pandas as pd
+              st, html = fetch("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+              if st != 200:
+                  raise SystemExit(f"Wikipedia S&P 500 page unavailable (HTTP {st})")
+              tables = pd.read_html(io.StringIO(html))
+              cur = tables[0]
+              cur.columns = [str(c) for c in cur.columns]
+              current = {}
+              for _, r in cur.iterrows():
+                  t = norm_t(r.get("Symbol"))
+                  cik = r.get("CIK")
+                  try:
+                      cik = int(float(cik))
+                  except Exception:
+                      cik = None
+                  current[t] = {"name": str(r.get("Security", "")), "sector": str(r.get("GICS Sector", "")), "cik": cik}
+              ch = tables[1]
+              flat = [" ".join(str(x) for x in (c if isinstance(c, tuple) else (c,))) for c in ch.columns]
+              col = lambda *words: next(i for i, f in enumerate(flat) if all(w.lower() in f.lower() for w in words))
+              i_date, i_add, i_rem, i_remname = col("date"), col("added", "ticker"), col("removed", "ticker"), col("removed", "security")
+              changes = []
+              for row in ch.itertuples(index=False):
+                  d = pd.to_datetime(row[i_date], errors="coerce")
+                  if pd.isna(d):
+                      continue
+                  clean = lambda v: norm_t(v) if isinstance(v, str) and v.strip() and v.strip().lower() != "nan" else None
+                  changes.append({"date": d.strftime("%Y-%m-%d"), "added": clean(row[i_add]), "removed": clean(row[i_rem]),
+                                  "removedName": str(row[i_remname]) if isinstance(row[i_remname], str) else ""})
+              changes.sort(key=lambda c: c["date"], reverse=True)
+              return current, changes
+
+
+          def members_at(day, current, changes):
+              m = set(current)
+              for c in changes:                            # newest first: undo every change made after `day`
+                  if c["date"] <= day:
+                      break
+                  if c["added"]:
+                      m.discard(c["added"])
+                  if c["removed"]:
+                      m.add(c["removed"])
+              return m
+
+
+          # ── 2. SEC company record → only the numbers the score needs, each with the date it was FILED ───────────────────
+          def facts_compact(cik):
+              st, body = fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json", sec=True)
+              time.sleep(0.12)
+              if st != 200 or not body:
+                  return None
+              d = json.loads(body)
+              gaap, dei = (d.get("facts") or {}).get("us-gaap") or {}, (d.get("facts") or {}).get("dei") or {}
+              out = {}
+              for key, (kind, tags) in CONCEPTS.items():
+                  rows, seen = [], set()
+                  for tag in tags:                          # first tag wins for a given period end
+                      for r in ((gaap.get(tag) or {}).get("units") or {}).get("USD") or []:
+                          if not str(r.get("form", "")).startswith(ANNUAL) or not r.get("filed"):
+                              continue
+                          if kind == "D":
+                              try:
+                                  days = (dt.date.fromisoformat(r["end"]) - dt.date.fromisoformat(r["start"])).days
+                              except Exception:
+                                  continue
+                              if not 330 <= days <= 400:
+                                  continue
+                          if r["end"] in seen:
+                              continue
+                          rows.append([r["end"], r["filed"], r["val"]])
+                      seen |= {x[0] for x in rows}
+                  out[key] = rows
+              sh = []
+              for tag, src in (("EntityCommonStockSharesOutstanding", dei), ("CommonStockSharesOutstanding", gaap)):
+                  for r in ((src.get(tag) or {}).get("units") or {}).get("shares") or []:
+                      if r.get("filed") and r.get("val"):
+                          sh.append([r["end"], r["filed"], r["val"]])
+                  if sh:
+                      break
+              out["shares"] = sh
+              return out
+
+
+          def pit_fin(fc, day):
+              """The latest two annual reports FILED on or before `day` (no look-ahead), as {"0": {...}, "1": {...}}."""
+              known = {k: [r for r in v if r[1] <= day] for k, v in fc.items()}
+              ends = sorted({r[0] for k in ("netIncome", "revenue", "assets") for r in known.get(k, [])}, reverse=True)
+              if not ends:
+                  return None
+              y0 = ends[0]
+              y1 = next((e for e in ends if e <= (dt.date.fromisoformat(y0) - dt.timedelta(days=300)).isoformat()), None)
+
+              def pick(key, end):
+                  if end is None:
+                      return None
+                  lo, hi = (dt.date.fromisoformat(end) - dt.timedelta(days=12)).isoformat(), (dt.date.fromisoformat(end) + dt.timedelta(days=12)).isoformat()
+                  cand = [r for r in known.get(key, []) if lo <= r[0] <= hi]
+                  return max(cand, key=lambda r: r[1])[2] if cand else None
+
+              fin = {"0": {}, "1": {}}
+              for key in CONCEPTS:
+                  for lab, end in (("0", y0), ("1", y1)):
+                      v = pick(key, end)
+                      if v is not None:
+                          fin[lab][key] = v
+              sh = sorted((r for r in known.get("shares", [])), key=lambda r: (r[1], r[0]))
+              if sh:
+                  fin["0"]["shares"] = sh[-1][2]
+                  fin["0"]["sharesDate"] = sh[-1][0]
+                  old = [r for r in sh if r[1] <= (dt.date.fromisoformat(day) - dt.timedelta(days=365)).isoformat()]
+                  if old:
+                      fin["1"]["shares"] = old[-1][2]
+              if y0 < (dt.date.fromisoformat(day) - dt.timedelta(days=550)).isoformat():
+                  return None                               # newest annual report older than ~18 months: treat as no data
+              return fin
+
+
+          # ── 3. prices (Tiingo: daily close and split/dividend-adjusted close) ────────────────────────────────────────────
+          class RateLimited(Exception):
+              pass
+
+
+          def tiingo_prices(t):
+              st, body = fetch(f"https://api.tiingo.com/tiingo/daily/{t}/prices?startDate={START_PRICES}&token={TIINGO}", tries=2)
+              low = (body or "").lower()
+              if st == 429 or "allocation" in low or "rate limit" in low or "too many" in low:
+                  raise RateLimited(body[:160])
+              if st != 200:
+                  return None
+              try:
+                  rows = json.loads(body)
+              except Exception:
+                  return None
+              if not isinstance(rows, list) or not rows:
+                  return None
+              return [[r["date"][:10], r.get("close"), r.get("adjClose"), r.get("splitFactor") or 1] for r in rows if r.get("adjClose")]
+
+
+          # ── 4. the test itself ───────────────────────────────────────────────────────────────────────────────────────────
+          def month_ends(dates):
+              out = {}
+              for d in dates:
+                  out[d[:7]] = d
+              return [out[k] for k in sorted(out)]
+
+
+          def at_or_before(series, day):
+              lo, hi = 0, len(series)
+              while lo < hi:
+                  m = (lo + hi) // 2
+                  if series[m][0] <= day:
+                      lo = m + 1
+                  else:
+                      hi = m
+              return lo - 1
+
+
+          def spearman(x, y):
+              n = len(x)
+              if n < 10:
+                  return None
+              rank = lambda v: {i: r for r, i in enumerate(sorted(range(n), key=lambda k: v[k]))}
+              rx, ry = rank(x), rank(y)
+              mx = my = (n - 1) / 2
+              sxy = sum((rx[i] - mx) * (ry[i] - my) for i in range(n))
+              sxx = sum((rx[i] - mx) ** 2 for i in range(n))
+              return sxy / sxx if sxx else None
+
+
+          def mean_t(v):
+              v = [x for x in v if x is not None]
+              if len(v) < 3:
+                  return None, None, len(v)
+              m = sum(v) / len(v)
+              sd = (sum((x - m) ** 2 for x in v) / (len(v) - 1)) ** 0.5
+              return m, (m / sd * len(v) ** 0.5 if sd else None), len(v)
+
+
+          LABEL_CUTS = [(80, "Strong"), (60, "Good stock — hold"), (30, "Average"), (0, "Weak")]
+
+
+          def run_test(current, changes, cik_of, sector_of, facts, prices):
+              spy = prices.get("SPY")
+              ends = [d for d in month_ends([r[0] for r in spy]) if d >= "2021-01-01"]
+              ends = ends[-(TEST_MONTHS + 1):]
+              months, cover = [], []
+              for i in range(len(ends) - 1):
+                  D, N = ends[i], ends[i + 1]
+                  mem = members_at(D, current, changes)
+                  comps, mp, fwd = {}, {}, {}
+                  no_px = no_fin = 0
+                  for t in mem:
+                      px = prices.get(t)
+                      if not px:
+                          no_px += 1
+                          continue
+                      j, k = at_or_before(px, D), at_or_before(px, N)
+                      if j < 260 or px[j][0] < (dt.date.fromisoformat(D) - dt.timedelta(days=7)).isoformat():
+                          no_px += 1
+                          continue
+                      fc = facts.get(cik_of.get(t))
+                      fin = pit_fin(fc, D) if fc else None
+                      if not fin or "shares" not in fin["0"]:
+                          no_fin += 1
+                          continue
+                      close, adj = px[j][1], px[j][2]
+                      # share count is from the last filing; a split since then changes the count, not the company's value
+                      split = 1.0
+                      q = j
+                      while q > 0 and px[q][0] > fin["0"]["sharesDate"]:
+                          split *= (px[q][3] if len(px[q]) > 3 and px[q][3] else 1)
+                          q -= 1
+                      mcap = fin["0"]["shares"] * split * close if close else None
+                      a = [r[2] for r in px[max(0, j - 252):j + 1]]
+                      rets = [math.log(a[q] / a[q - 1]) for q in range(1, len(a)) if a[q] > 0 and a[q - 1] > 0]
+                      mu = sum(rets) / len(rets)
+                      vol = (sum((r - mu) ** 2 for r in rets) / (len(rets) - 1)) ** 0.5 * math.sqrt(252) * 100
+                      mom = (px[j - 21][2] / px[j - 252][2] - 1) * 100
+                      comps[t] = {"mcap": mcap, "sector": sector_of.get(t, ""), "industry": "", "fin": fin}
+                      mp[t] = {"mom12_1": mom, "vol": vol}
+                      # a stock that stopped trading during the month: its last price is its result
+                      fwd[t] = (px[k][2] / adj - 1) * 100 if k > j else 0.0
+                  res = score_v1.build({"years": ["0", "1", "2"], "companies": comps, "marketPrices": mp})
+                  rows = [(t, r) for t, r in res.items() if r["score"] is not None and t in fwd]
+                  if len(rows) < 100:
+                      continue
+                  rows.sort(key=lambda x: x[1]["score"])
+                  n = len(rows)
+                  lab = {}
+                  for q, (t, r) in enumerate(rows):
+                      pct = 100 * (q + 0.5) / n
+                      lab[t] = next(l for cut, l in LABEL_CUTS if pct >= cut)
+                  uni = sum(fwd[t] for t, _ in rows) / n
+                  sj, sk = at_or_before(spy, D), at_or_before(spy, N)
+                  m = {"date": D, "n": n, "members": len(mem), "universe": uni, "spy": (spy[sk][2] / spy[sj][2] - 1) * 100,
+                       "ic": spearman([r["score"] for _, r in rows], [fwd[t] for t, _ in rows]), "labels": {}, "pillarIC": {}}
+                  for _, l in LABEL_CUTS:
+                      v = [fwd[t] for t, _ in rows if lab[t] == l]
+                      m["labels"][l] = sum(v) / len(v) if v else None
+                  for p in ("momentum", "quality", "value", "lowRisk"):
+                      pr = [(r["pillars"][p], fwd[t]) for t, r in rows if r["pillars"].get(p) is not None]
+                      m["pillarIC"][p] = spearman([a for a, _ in pr], [b for _, b in pr]) if len(pr) >= 50 else None
+                  months.append(m)
+                  cover.append((len(mem), n, no_px, no_fin))
+              return months, cover
+
+
+          def report(months, cover, stats):
+              L = []
+              say = L.append
+              say(f"# 5-year test of the new score — {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC")
+              say("")
+              if not months:
+                  say("No month could be tested — see the download status below.")
+              else:
+                  say(f"**Tested:** {len(months)} months, {months[0]['date']} → {months[-1]['date']}. Each month: the S&P 500 members of that month, "
+                      "scored with only the reports filed and prices known on that day, then measured over the next month.")
+                  say("")
+                  ex = lambda l: [m["labels"][l] - m["universe"] for m in months if m["labels"].get(l) is not None]
+                  say("| Label | Avg next-month return vs the average S&P 500 member | Per year (×12) | Months better | t-stat |")
+                  say("|---|---|---|---|---|")
+                  for _, l in LABEL_CUTS:
+                      v = ex(l)
+                      mu, t, k = mean_t(v)
+                      if mu is None:
+                          continue
+                      say(f"| {l} | {mu:+.2f}% | {mu * 12:+.1f}% | {sum(1 for x in v if x > 0)} of {k} | {t:.1f} |")
+                  sw = [m["labels"]["Strong"] - m["labels"]["Weak"] for m in months if m["labels"].get("Strong") is not None and m["labels"].get("Weak") is not None]
+                  mu, t, k = mean_t(sw)
+                  say("")
+                  say(f"**Strong minus Weak:** {mu:+.2f}% a month ({mu * 12:+.1f}% a year), Strong ahead in {sum(1 for x in sw if x > 0)} of {k} months, t = {t:.1f}.")
+                  icm, ict, k = mean_t([m["ic"] for m in months])
+                  say(f"**Rank agreement (IC)** between score and next-month return: {icm:+.3f} on average, t = {ict:.1f} (above about 2 = unlikely to be luck).")
+                  sp = mean_t([m["universe"] - m["spy"] for m in months])[0]
+                  say(f"(The average member vs the S&P 500 index itself: {sp:+.2f}% a month — the equal-weight vs size-weight difference, for context.)")
+                  say("")
+                  say("| Part | Rank agreement (IC) | t-stat | Months positive |")
+                  say("|---|---|---|---|")
+                  for p in ("momentum", "quality", "value", "lowRisk"):
+                      v = [m["pillarIC"][p] for m in months if m["pillarIC"].get(p) is not None]
+                      mu, t, k = mean_t(v)
+                      if mu is not None:
+                          say(f"| {p} | {mu:+.3f} | {t:.1f} | {sum(1 for x in v if x > 0)} of {k} |")
+                  yrs = {}
+                  for m in months:
+                      if m["labels"].get("Strong") is not None and m["labels"].get("Weak") is not None:
+                          yrs.setdefault(m["date"][:4], []).append(m["labels"]["Strong"] - m["labels"]["Weak"])
+                  say("")
+                  say("**Strong minus Weak by year:** " + " · ".join(f"{y}: {sum(v):+.1f}%" for y, v in sorted(yrs.items())))
+              say("")
+              say("## How complete the test is")
+              if cover:
+                  avg = lambda i: sum(c[i] for c in cover) / len(cover)
+                  say(f"- S&P 500 members per month: {avg(0):.0f} on average; scored: {avg(1):.0f}; no price history: {avg(2):.0f}; no SEC annual data: {avg(3):.0f}.")
+              for k, v in stats.items():
+                  say(f"- {k}: {v}")
+              say("- Sectors are today's (a company rarely changes sector). Peer groups are S&P 500 members of that month only.")
+              say("- Returns include dividends (adjusted prices). No trading costs are deducted.")
+              return "\n".join(L) + "\n"
+
+
+          def main():
+              os.makedirs(BT, exist_ok=True)
+              done_flag = os.path.join(BT, "DONE")
+              if os.path.exists(done_flag) and os.environ.get("BT_FORCE") != "1":
+                  print("Already finished — nothing to do (delete data/bt/DONE or set BT_FORCE=1 to run again).")
+                  return
+              if not TIINGO:
+                  raise SystemExit("TIINGO_KEY repository secret is missing")
+              current, changes = membership()
+              gz_write(f"{BT}/membership.json.gz", {"current": current, "changes": changes})
+              first = (dt.date.today() - dt.timedelta(days=int(365.25 * 5) + 45)).isoformat()
+              every = set(current)
+              for c in changes:
+                  if c["date"] >= first and c["removed"]:
+                      every.add(c["removed"])
+              removed = sorted(every - set(current))
+              log(f"Stocks that were in the S&P 500 at some point in the test window: {len(every)} ({len(removed)} no longer in it)")
+
+              # CIK (SEC company number) for every one of them
+              st, body = fetch("https://www.sec.gov/files/company_tickers.json", sec=True)
+              t2cik = {norm_t(v["ticker"]): int(v["cik_str"]) for v in json.loads(body).values()} if st == 200 else {}
+              cik_of = {t: (current.get(t) or {}).get("cik") or t2cik.get(t) for t in every}
+              name_path = f"{BT}/cik_by_name.json.gz"
+              need_names = [t for t in removed if not cik_of.get(t)]
+              if need_names:
+                  if os.path.exists(name_path):
+                      byname = gz_read(name_path)
+                  else:
+                      st, body = fetch("https://www.sec.gov/Archives/edgar/cik-lookup-data.txt", sec=True, timeout=300)
+                      byname = {}
+                      for line in body.splitlines():
+                          p = line.rsplit(":", 2)
+                          if len(p) >= 2 and p[-2].strip().isdigit():
+                              byname.setdefault(norm_name(p[0]), int(p[-2]))
+                      gz_write(name_path, byname)
+                  rname = {c["removed"]: c["removedName"] for c in changes if c["removed"]}
+                  for t in need_names:
+                      cik_of[t] = byname.get(norm_name(rname.get(t, "")))
+              found_cik = sum(1 for t in removed if cik_of.get(t))
+
+              # sectors: today's Nasdaq list (nightly build) or Wikipedia's for current members
+              sector_of = {t: v["sector"] for t, v in current.items()}
+              try:
+                  fund = json.load(open("data/fundamentals.json"))["companies"]
+                  sector_of.update({t: c.get("sector") for t, c in fund.items() if c.get("sector")})
+              except Exception:
+                  pass
+
+              # SEC records (no daily limit; kept so later runs skip them)
+              facts, f_new = {}, 0
+              for t in sorted(every):
+                  cik = cik_of.get(t)
+                  if not cik:
+                      continue
+                  path = f"{BT}/facts/{cik}.json.gz"
+                  if os.path.exists(path):
+                      facts[cik] = gz_read(path)
+                      continue
+                  if time.time() - T0 > TIME_BUDGET:
+                      break
+                  fc = facts_compact(cik)
+                  gz_write(path, fc or {})
+                  facts[cik] = fc or {}
+                  f_new += 1
+              log(f"SEC records: {len(facts)} kept ({f_new} downloaded this run)")
+
+              # prices (Tiingo free plan: limited requests per hour → resume next hour)
+              miss_path = f"{BT}/price_missing.json"
+              missing = json.load(open(miss_path)) if os.path.exists(miss_path) else {}
+              prices, p_new, limited = {}, 0, ""
+              for t in ["SPY"] + sorted(every):
+                  path = f"{BT}/prices/{t}.json.gz"
+                  if os.path.exists(path):
+                      prices[t] = gz_read(path)
+                      continue
+                  if missing.get(t, 0) >= 2 or limited or time.time() - T0 > TIME_BUDGET:
+                      continue
+                  try:
+                      px = tiingo_prices(t)
+                  except RateLimited as e:
+                      limited = str(e)
+                      continue
+                  time.sleep(1.2)
+                  if px:
+                      gz_write(path, px)
+                      prices[t] = px
+                      p_new += 1
+                  else:
+                      missing[t] = missing.get(t, 0) + 1
+              json.dump(missing, open(miss_path, "w"))
+              todo = [t for t in ["SPY"] + sorted(every) if t not in prices and missing.get(t, 0) < 2]
+              log(f"Prices: {len(prices)} kept ({p_new} downloaded this run); not available: {sum(1 for v in missing.values() if v >= 2)}; still to try: {len(todo)}"
+                  + (f" — paused by Tiingo's limit: {limited[:100]}" if limited else ""))
+
+              status = {"Stocks in the S&P 500 during the window": len(every),
+                        "…of which no longer in it": f"{len(removed)}; SEC company number found for {found_cik}; prices found for {sum(1 for t in removed if t in prices)}",
+                        "Prices still to download": len(todo)}
+              os.makedirs("reports", exist_ok=True)
+              if todo:
+                  with open("reports/backtest.md", "w") as f:
+                      f.write(f"# 5-year test — downloading ({dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC)\n\n"
+                              + "\n".join("- " + x for x in LOG) + "\n\nIt continues by itself every hour until all prices are in, then writes the results here.\n")
+                  return
+              months, cover = run_test(current, changes, cik_of, sector_of, facts, prices)
+              with open("reports/backtest.md", "w") as f:
+                  f.write(report(months, cover, status))
+              json.dump(months, open(f"{BT}/results.json", "w"))
+              open(done_flag, "w").write(dt.datetime.now(dt.timezone.utc).isoformat())
+              print(open("reports/backtest.md").read())
+
+
+          if __name__ == "__main__":
+              main()
+          PYEOF
+          python3 /tmp/bt/backtest.py
+      - name: Show the report on this page
+        if: always() && steps.done.outputs.done != '1'
+        run: cat reports/backtest.md >> "$GITHUB_STEP_SUMMARY" || echo "no report yet" >> "$GITHUB_STEP_SUMMARY"
+      - name: Save progress to the repo
+        if: always() && steps.done.outputs.done != '1'
+        run: |
+          git config user.name "five-year-test"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/bt reports/backtest.md || exit 0
+          git commit -q -m "five-year test progress" || exit 0
+          for i in 1 2 3; do
+            git pull --rebase -X theirs origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
