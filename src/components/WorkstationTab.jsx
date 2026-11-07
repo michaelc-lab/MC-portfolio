@@ -437,6 +437,79 @@ const td = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, whit
 const pctColor = v => v == null ? '#475569' : v >= 0 ? '#00ff88' : '#ff4466'
 
 
+// ── New score (trial) — shown next to the MC Score while both are compared ─────────────────────────────
+const NS_PARTS = [
+  ['momentum', 'Momentum', v => v >= 60 ? 'Rising more steadily than most over the past year' : v >= 40 ? 'Middle of the pack over the past year' : 'Weaker than most over the past year'],
+  ['quality', 'Quality', v => v >= 60 ? 'Profitable, little debt, few new shares' : v >= 40 ? 'About average profitability and debt' : 'Weak profitability, debt or dilution'],
+  ['value', 'Value', v => v >= 60 ? 'Cheap for what it earns' : v >= 40 ? 'Priced about average for what it earns' : 'Expensive for what it earns'],
+  ['lowRisk', 'Low risk', v => v >= 60 ? 'Calmer price than most' : v >= 40 ? 'Average price swings' : 'Jumpier price than most'],
+]
+const nsColor = v => v == null ? '#475569' : v >= 60 ? '#00ff88' : v >= 40 ? '#ffb800' : '#ff4466'
+const NS_CLASS = { Regular: 'Regular company', Financial: 'Financial company', Speculative: 'Speculative company' }
+const NS_SIZE = { large: 'large', mid: 'mid-size', small: 'small' }
+
+export function NewScorePanel({ ns, ticker, isMobile }) {
+  if (!ns) return null
+  const head = (
+    <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-3">
+      New score · trial — compare with the MC Score below
+    </div>
+  )
+  if (ns.error || ns.missing) return (
+    <div className="panel p-5" data-testid="new-score">
+      {head}
+      <div className="text-[13px] text-slate-400">{ns.missing ? ns.why : 'New score unavailable right now — try again later'}</div>
+    </div>
+  )
+  const big = nsColor(ns.score * 10)
+  return (
+    <div className="panel p-5" data-testid="new-score">
+      {head}
+      <div className={`flex ${isMobile ? 'flex-col gap-5' : 'gap-8'}`}>
+        <div style={{ minWidth: isMobile ? 0 : 220 }}>
+          <div className="flex items-baseline gap-2">
+            <span className="font-display" style={{ fontSize: 44, fontWeight: 600, lineHeight: 1, color: big }} data-testid="ns-score">{ns.score.toFixed(1)}</span>
+            <span className="text-slate-500">/ 10</span>
+          </div>
+          <div className="text-[17px] font-semibold mt-2" style={{ color: big }} data-testid="ns-label">{ns.label}</div>
+          <div className="mt-2"><span className="inline-block text-[11px] px-2 py-0.5 rounded border border-white/15 text-slate-300">{NS_CLASS[ns.cls] || ns.cls}</span></div>
+          <div className="font-mono text-[11px] text-slate-500 mt-3 leading-relaxed">
+            Better than {Math.round(ns.score * 10)}% of the<br />S&amp;P 500 + Nasdaq-100
+          </div>
+          <div className="font-mono text-[10px] text-slate-600 mt-3 leading-relaxed">
+            Compared with {ns.peers} {NS_SIZE[ns.size] || ''} {ns.sector ? ns.sector.toLowerCase() : ''} companies<br />
+            Financials: {ns.fy} annual reports (SEC) · built {ns.asOf}
+            {ns.livePrices && <><br />Momentum and risk: from today's prices</>}
+          </div>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-1">The 4 parts — each counts the same</div>
+          {NS_PARTS.map(([k, name, words]) => { const v = ns.pillars ? ns.pillars[k] : null; return (
+            <div key={k} className="flex items-center gap-3 py-1.5 border-b border-white/5 text-[13px]" data-testid={'ns-part-' + k}>
+              <span className="w-20 flex-shrink-0 text-slate-300">{name}</span>
+              <div className="h-1.5 rounded bg-navy-700 overflow-hidden flex-shrink-0" style={{ width: isMobile ? 90 : 180 }}>
+                <div className="h-full rounded" style={{ width: (v == null ? 0 : v) + '%', background: nsColor(v) }} />
+              </div>
+              <span className="text-slate-400 truncate">{v == null ? 'Not enough data' : words(v)}</span>
+            </div>
+          ) })}
+          {ns.reasons && ns.reasons.length > 0 && <>
+            <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mt-4 mb-1">Why, in {ns.reasons.length} line{ns.reasons.length === 1 ? '' : 's'}</div>
+            {ns.reasons.map((r, i) => (
+              <div key={i} className="flex gap-2 text-[13px] text-slate-300 py-0.5">
+                <span style={{ color: r[0] === '+' ? '#00ff88' : '#ffb800' }}>{r[0] === '+' ? '▲' : '●'}</span>{r[1]}
+              </div>
+            ))}
+          </>}
+          <div className="text-[13px] text-slate-400 mt-3" data-testid="ns-flags">
+            <span className="text-terminal-red">⚑ Red flags:</span> {ns.flags && ns.flags.length ? ns.flags.join(' · ') : 'none found'}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onGenerate }) {
   const [openKey, setOpenKey] = useState(null)
   const [showTrack, setShowTrack] = useState(false)
@@ -1093,6 +1166,9 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
           </div>
 
           <DecisionCheck key={data.ticker} data={data} />
+
+          {/* New score (trial) — next to the MC Score while the two are compared */}
+          <NewScorePanel ns={data.newScore} ticker={data.ticker} isMobile={isMobile} />
 
           {/* MC Score — quantitative model + Claude explanation */}
           <MCScorePanel
