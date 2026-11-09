@@ -9,6 +9,25 @@ const loadWorkstation = () => import('./components/WorkstationTab')
 const WorkstationTab = lazy(loadWorkstation)
 const CustomPortfolios = lazy(() => import('./components/CustomPortfolios'))
 import { SkeletonCard, SkeletonTable } from './components/Skeleton'
+import { getOwnerKey, setOwnerKey } from './lib/api'
+
+// the whole dashboard is locked to your owner key (the backend address is public, your holdings are not)
+function UnlockScreen({ onUnlock }) {
+  const [val, setVal] = useState('')
+  const had = !!getOwnerKey()
+  const go = () => { if (val.trim().length < 8) return; setOwnerKey(val); setVal(''); onUnlock() }
+  return (
+    <div className="panel-bright p-8 text-center" data-testid="unlock-screen">
+      <div className="font-mono text-[11px] uppercase tracking-wider text-terminal-amber mb-2">{had ? 'Owner key not accepted' : 'Locked'}</div>
+      <div className="text-[13px] text-slate-400 mb-4">{had ? 'Paste your owner key again.' : 'Paste your owner key to open the dashboard on this device (once per device).'}</div>
+      <div className="flex justify-center gap-2">
+        <input type="password" value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} placeholder="Owner key" aria-label="Owner key"
+          className="bg-navy-900 border border-white/10 rounded px-3 py-2 text-[13px] text-slate-200 w-56 focus:outline-none focus:border-electric-500/50" />
+        <button onClick={go} className="btn-primary px-5 py-2 rounded font-mono text-[11px] uppercase tracking-wider">Unlock</button>
+      </div>
+    </div>
+  )
+}
 
 const TABS = [
   { id: 'lead',        label: 'Lead'         },
@@ -92,7 +111,8 @@ export default function App() {
 
 
         {/* Error */}
-        {error && !loading && (
+        {error === 'locked' && !loading && <UnlockScreen onUnlock={refresh} />}
+        {error && error !== 'locked' && !loading && (
           <div className="panel-bright p-8 text-center border-red-500/20">
             <div className="font-mono text-[11px] uppercase tracking-wider text-red-400 mb-2">Connection Error</div>
             <div className="font-mono text-[12px] text-slate-500 mb-4">{error}</div>
