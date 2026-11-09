@@ -19,6 +19,7 @@ export function usePortfolioData() {
     try {
       const json = await jsonp(APPS_SCRIPT_URL + '?action=getAllData', { timeout: 60000, retryTimeout: 60000 })
       // the backend reports its own failures as {error}: that is a failed refresh, never "everything is empty, updated just now"
+      if (json && json.locked) throw new Error('locked')            // this device has no (or a wrong) owner key
       if (!json || json.error || !Array.isArray(json.portfolio)) throw new Error((json && json.error) || 'The data service returned an incomplete answer')
       if (seq !== seqRef.current) return                          // a newer request already answered
       setData(json); const now = new Date(); setLastUpdated(now); lastRef.current = now.getTime(); setError(null)
