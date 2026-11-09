@@ -352,8 +352,14 @@ jobs:
               if st != 200:
                   raise SystemExit(f"Wikipedia S&P 500 page unavailable (HTTP {st})")
               tables = pd.read_html(io.StringIO(html))
-              cur = tables[0]
-              cur.columns = [str(c) for c in cur.columns]
+              flat_of = lambda t: [" ".join(str(x) for x in (c if isinstance(c, tuple) else (c,))) for c in t.columns]
+              # find the two tables by their headers (Wikipedia sometimes adds or reorders tables)
+              cur = next((t for t in tables if any("symbol" in f.lower() for f in flat_of(t)) and any("cik" in f.lower() for f in flat_of(t))), None)
+              ch = next((t for t in tables if any("added" in f.lower() for f in flat_of(t)) and any("removed" in f.lower() for f in flat_of(t))), None)
+              if cur is None or ch is None:
+                  raise SystemExit("Wikipedia layout changed — table headers found: " + " | ".join(", ".join(flat_of(t))[:150] for t in tables[:6]))
+              cur = cur.copy()
+              cur.columns = [f.split(" ")[0] if f.split(" ")[0] == f.split(" ")[-1] else f for f in flat_of(cur)]
               current = {}
               for _, r in cur.iterrows():
                   t = norm_t(r.get("Symbol"))
@@ -363,10 +369,14 @@ jobs:
                   except Exception:
                       cik = None
                   current[t] = {"name": str(r.get("Security", "")), "sector": str(r.get("GICS Sector", "")), "cik": cik}
-              ch = tables[1]
-              flat = [" ".join(str(x) for x in (c if isinstance(c, tuple) else (c,))) for c in ch.columns]
-              col = lambda *words: next(i for i, f in enumerate(flat) if all(w.lower() in f.lower() for w in words))
-              i_date, i_add, i_rem, i_remname = col("date"), col("added", "ticker"), col("removed", "ticker"), col("removed", "security")
+              flat = flat_of(ch)
+              def col(*words):
+                  for i, f in enumerate(flat):
+                      if all(w.lower() in f.lower() for w in words):
+                          return i
+                  raise SystemExit(f"Wikipedia change table: no column with {words}; columns are {flat}")
+              i_date = next((i for i, f in enumerate(flat) if "date" in f.lower() or "effective" in f.lower()), 0)
+              i_add, i_rem, i_remname = col("added", "ticker"), col("removed", "ticker"), col("removed", "security")
               changes = []
               for row in ch.itertuples(index=False):
                   d = pd.to_datetime(row[i_date], errors="coerce")
@@ -376,6 +386,10 @@ jobs:
                   changes.append({"date": d.strftime("%Y-%m-%d"), "added": clean(row[i_add]), "removed": clean(row[i_rem]),
                                   "removedName": str(row[i_remname]) if isinstance(row[i_remname], str) else ""})
               changes.sort(key=lambda c: c["date"], reverse=True)
+              recent = [c for c in changes if c["date"] >= (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()]
+              if len(current) < 450 or len(recent) < 20:              # never run a test on a half-read list
+                  raise SystemExit(f"Wikipedia list looks incomplete: {len(current)} current members, {len(recent)} changes in 5 years; "
+                                   f"change-table columns: {flat}; first rows: {changes[:3]}")
               return current, changes
 
 
