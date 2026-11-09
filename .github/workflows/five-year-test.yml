@@ -29,6 +29,7 @@ jobs:
         if: steps.done.outputs.done != '1'
         env:
           TIINGO_KEY: ${{ secrets.TIINGO_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SEC_UA: ${{ vars.SEC_UA }}
         run: |
           pip install --quiet pandas lxml
@@ -260,6 +261,7 @@ jobs:
           import sys
           import time
           import urllib.error
+          import urllib.parse
           import urllib.request
 
           sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -301,6 +303,8 @@ jobs:
 
           def fetch(url, sec=False, tries=3, timeout=90):
               h = {"User-Agent": UA_SEC if sec else UA_WEB, "Accept-Encoding": "gzip"}
+              if "api.github.com" in url and os.environ.get("GITHUB_TOKEN"):
+                  h["Authorization"] = "Bearer " + os.environ["GITHUB_TOKEN"]      # the job's own read token (avoids the anonymous limit)
               last = 0
               for a in range(tries):
                   try:
@@ -345,51 +349,120 @@ jobs:
               return " ".join(w for w in s.split() if w not in drop)
 
 
-          # ── 1. S&P 500 membership month by month (current list + every change since, from Wikipedia) ──────────────────
+          # ── 1. S&P 500 membership month by month (today's list + every change since) ─────────────────────────────────────
+          def _flat(t):
+              return [" ".join(str(x) for x in (c if isinstance(c, tuple) else (c,))) for c in t.columns]
+
+
+          def _changes_from_tables(tables):
+              """a Wikipedia table with Added / Removed columns → [{date, added, removed, removedName}] (newest first)"""
+              import pandas as pd
+              for ch in tables:
+                  flat = _flat(ch)
+                  low = [f.lower() for f in flat]
+                  if not (any("added" in f for f in low) and any("removed" in f for f in low)):
+                      continue
+                  find = lambda *w: next((i for i, f in enumerate(low) if all(x in f for x in w)), None)
+                  i_date = next((i for i, f in enumerate(low) if "date" in f or "effective" in f), 0)
+                  i_add, i_rem, i_remname = find("added", "ticker") or find("added", "symbol"), find("removed", "ticker") or find("removed", "symbol"), find("removed", "security") or find("removed", "company")
+                  if i_add is None or i_rem is None:
+                      continue
+                  out = []
+                  clean = lambda v: norm_t(v) if isinstance(v, str) and v.strip() and v.strip().lower() != "nan" else None
+                  for row in ch.itertuples(index=False):
+                      d = pd.to_datetime(row[i_date], errors="coerce")
+                      if pd.isna(d):
+                          continue
+                      nm = row[i_remname] if i_remname is not None else ""
+                      out.append({"date": d.strftime("%Y-%m-%d"), "added": clean(row[i_add]), "removed": clean(row[i_rem]), "removedName": nm if isinstance(nm, str) else ""})
+                  if out:
+                      return sorted(out, key=lambda c: c["date"], reverse=True)
+              return []
+
+
+          def _enough(changes):
+              since = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
+              return sum(1 for c in changes if c["date"] >= since) >= 20
+
+
+          def _changes_from_snapshots(csv_text):
+              """a CSV of dated member lists (date,"T1,T2,…") → the changes between consecutive dates"""
+              import csv
+              snaps = []
+              for row in csv.reader(io.StringIO(csv_text)):
+                  if len(row) >= 2 and re.match(r"\d{4}-\d{2}-\d{2}", row[0]):
+                      snaps.append((row[0], {norm_t(x) for x in row[1].split(",") if x.strip()}))
+              snaps.sort()
+              out = []
+              for (d0, a), (d1, b) in zip(snaps, snaps[1:]):
+                  for t in b - a:
+                      out.append({"date": d1, "added": t, "removed": None, "removedName": ""})
+                  for t in a - b:
+                      out.append({"date": d1, "added": None, "removed": t, "removedName": ""})
+              return sorted(out, key=lambda c: c["date"], reverse=True)
+
+
           def membership():
               import pandas as pd
               st, html = fetch("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
               if st != 200:
                   raise SystemExit(f"Wikipedia S&P 500 page unavailable (HTTP {st})")
               tables = pd.read_html(io.StringIO(html))
-              flat_of = lambda t: [" ".join(str(x) for x in (c if isinstance(c, tuple) else (c,))) for c in t.columns]
-              # find the two tables by their headers (Wikipedia sometimes adds or reorders tables)
-              cur = next((t for t in tables if any("symbol" in f.lower() for f in flat_of(t)) and any("cik" in f.lower() for f in flat_of(t))), None)
-              ch = next((t for t in tables if any("added" in f.lower() for f in flat_of(t)) and any("removed" in f.lower() for f in flat_of(t))), None)
-              if cur is None or ch is None:
-                  raise SystemExit("Wikipedia layout changed — table headers found: " + " | ".join(", ".join(flat_of(t))[:150] for t in tables[:6]))
+              cur = next((t for t in tables if any("symbol" in f.lower() for f in _flat(t)) and any("cik" in f.lower() for f in _flat(t))), None)
+              if cur is None:
+                  raise SystemExit("Wikipedia layout changed — table headers found: " + " | ".join(", ".join(_flat(t))[:150] for t in tables[:6]))
               cur = cur.copy()
-              cur.columns = [f.split(" ")[0] if f.split(" ")[0] == f.split(" ")[-1] else f for f in flat_of(cur)]
+              cur.columns = [f.split(" ")[0] if f.split(" ")[0] == f.split(" ")[-1] else f for f in _flat(cur)]
               current = {}
               for _, r in cur.iterrows():
                   t = norm_t(r.get("Symbol"))
-                  cik = r.get("CIK")
                   try:
-                      cik = int(float(cik))
+                      cik = int(float(r.get("CIK")))
                   except Exception:
                       cik = None
                   current[t] = {"name": str(r.get("Security", "")), "sector": str(r.get("GICS Sector", "")), "cik": cik}
-              flat = flat_of(ch)
-              def col(*words):
-                  for i, f in enumerate(flat):
-                      if all(w.lower() in f.lower() for w in words):
-                          return i
-                  raise SystemExit(f"Wikipedia change table: no column with {words}; columns are {flat}")
-              i_date = next((i for i, f in enumerate(flat) if "date" in f.lower() or "effective" in f.lower()), 0)
-              i_add, i_rem, i_remname = col("added", "ticker"), col("removed", "ticker"), col("removed", "security")
-              changes = []
-              for row in ch.itertuples(index=False):
-                  d = pd.to_datetime(row[i_date], errors="coerce")
-                  if pd.isna(d):
-                      continue
-                  clean = lambda v: norm_t(v) if isinstance(v, str) and v.strip() and v.strip().lower() != "nan" else None
-                  changes.append({"date": d.strftime("%Y-%m-%d"), "added": clean(row[i_add]), "removed": clean(row[i_rem]),
-                                  "removedName": str(row[i_remname]) if isinstance(row[i_remname], str) else ""})
-              changes.sort(key=lambda c: c["date"], reverse=True)
-              recent = [c for c in changes if c["date"] >= (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()]
-              if len(current) < 450 or len(recent) < 20:              # never run a test on a half-read list
-                  raise SystemExit(f"Wikipedia list looks incomplete: {len(current)} current members, {len(recent)} changes in 5 years; "
-                                   f"change-table columns: {flat}; first rows: {changes[:3]}")
+              if len(current) < 450:
+                  raise SystemExit(f"Wikipedia list looks incomplete: {len(current)} current members")
+
+              # the change history: on the same page, else on another Wikipedia page, else a public dataset on GitHub
+              tried = []
+              changes = _changes_from_tables(tables)
+              tried.append(f"main page: {len(changes)}")
+              if not _enough(changes):
+                  for q in ("List of S&P 500 companies changes", "S&P 500 index component changes added removed", "Historical components of the S&P 500"):
+                      st, body = fetch("https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=5&srsearch=" + urllib.parse.quote(q))
+                      titles = [x["title"] for x in (json.loads(body).get("query", {}).get("search", []) if st == 200 and body else [])]
+                      for title in titles:
+                          if title == "List of S&P 500 companies":
+                              continue
+                          st, h = fetch("https://en.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_")))
+                          if st != 200:
+                              continue
+                          try:
+                              c2 = _changes_from_tables(pd.read_html(io.StringIO(h)))
+                          except Exception:
+                              c2 = []
+                          tried.append(f"{title}: {len(c2)}")
+                          if _enough(c2):
+                              changes = c2
+                              break
+                      if _enough(changes):
+                          break
+              if not _enough(changes):
+                  st, body = fetch("https://api.github.com/repos/fja05680/sp500/contents")
+                  files = [f for f in (json.loads(body) if st == 200 and body else []) if isinstance(f, dict) and "historical components" in f.get("name", "").lower() and f["name"].endswith(".csv")]
+                  if files:
+                      pick = sorted(files, key=lambda f: f["name"])[-1]
+                      st, csvt = fetch(pick["download_url"], timeout=180)
+                      c3 = _changes_from_snapshots(csvt) if st == 200 else []
+                      tried.append(f"GitHub dataset {pick['name']}: {len(c3)}")
+                      if _enough(c3):
+                          changes = c3
+                  else:
+                      tried.append(f"GitHub dataset: not found (HTTP {st})")
+              if not _enough(changes):
+                  raise SystemExit("Could not find the S&P 500 change history — tried " + "; ".join(tried))
+              log("S&P 500 change history from: " + tried[-1])
               return current, changes
 
 
