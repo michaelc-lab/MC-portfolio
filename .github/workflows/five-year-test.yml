@@ -320,7 +320,7 @@ jobs:
                           body = e.read().decode("utf-8", "replace")[:300]
                       except Exception:
                           pass
-                      if e.code in (400, 401, 403, 404):
+                      if e.code in (400, 401, 403, 404, 429):            # 429 = too many requests: answer at once, never retry
                           return e.code, body
                   except Exception:
                       last = 0
@@ -803,7 +803,7 @@ jobs:
               # prices (Tiingo free plan: limited requests per hour → resume next hour)
               miss_path = f"{BT}/price_missing.json"
               missing = json.load(open(miss_path)) if os.path.exists(miss_path) else {}
-              prices, p_new, limited = {}, 0, ""
+              prices, p_new, limited, waits = {}, 0, "", 0
               for t in ["SPY"] + sorted(every):
                   path = f"{BT}/prices/{t}.json.gz"
                   if os.path.exists(path):
@@ -811,10 +811,22 @@ jobs:
                       continue
                   if missing.get(t, 0) >= 2 or limited or time.time() - T0 > TIME_BUDGET:
                       continue
-                  try:
-                      px = tiingo_prices(t)
-                  except RateLimited as e:
-                      limited = str(e)
+                  px = None
+                  while True:
+                      try:
+                          px = tiingo_prices(t)
+                          break
+                      except RateLimited as e:
+                          # Tiingo's hourly allowance is used up: wait for the next hour inside this same run (GitHub's own
+                          # hourly schedule is unreliable), as long as there is time left; otherwise stop and resume later
+                          if time.time() - T0 + 62 * 60 < TIME_BUDGET and waits < 4:
+                              waits += 1
+                              log(f"Tiingo hourly limit reached after {p_new} downloads — waiting 61 minutes (pause {waits})")
+                              time.sleep(61 * 60)
+                              continue
+                          limited = str(e) or "hourly limit"
+                          break
+                  if limited:
                       continue
                   time.sleep(1.2)
                   if px:
