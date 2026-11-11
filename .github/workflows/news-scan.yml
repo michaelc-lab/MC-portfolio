@@ -1,0 +1,632 @@
+# MC Portfolio — S&P 500 news scanner (runs on GitHub's servers, free; public repo = unlimited minutes).
+# Test run: GitHub → Actions → "News scan" → Run workflow. Takes ~5 minutes.
+# Writes reports/news-scan.md: which sources worked + the important events it found (public S&P 500 news only,
+# nothing about your holdings). No buy/sell direction is ever assigned.
+name: News scan
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install table reader
+        run: pip install --quiet pandas lxml
+      - name: Scan the news
+        env:
+          SEC_UA: ${{ vars.SEC_UA }}
+          TIINGO_KEY: ${{ secrets.TIINGO_KEY }}
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+        run: |
+          mkdir -p /tmp/scan
+          cat > /tmp/scan/news_scan.py <<'PYEOF'
+          #!/usr/bin/env python3
+          """MC Portfolio — S&P 500 news scanner (runs on GitHub's servers, free).
+
+          Every run:
+            1. reads several free sources (Google News, CNBC, company press-release wires, the SEC's live 8-K list,
+               Finnhub's market news when a key is set, and big price moves when a Tiingo key is set),
+            2. keeps only stories about an S&P 500 company AND about an important event type,
+            3. merges the same event reported by several sources into one item,
+            4. writes news.json (public S&P 500 news only — nothing about your holdings) and a short source report.
+
+          No direction (bullish/bearish) is ever assigned: the scanner says WHAT happened and how widely it is reported.
+          Standard library only, except pandas+lxml for reading the S&P 500 list from Wikipedia.
+          """
+          import html
+          import io
+          import json
+          import os
+          import re
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          from datetime import datetime, timezone, timedelta
+          from email.utils import parsedate_to_datetime
+
+          UA_BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+          SEC_UA = os.environ.get("SEC_UA") or "MC-Portfolio personal research admin@mc-portfolio.example"
+          KEEP_HOURS = 48
+          NOW = datetime.now(timezone.utc)
+
+          # ── event types: what makes a story "important" ──────────────────────────────────────────────────────────────────
+          # Order matters: the first type that matches names the event.
+          EVENT_TYPES = [
+              ("bankruptcy", "Bankruptcy / default", r"\b(chapter 11|bankruptcy|bankrupt|insolven\w*|default(s|ed)? on (its |a )?(debt|loan|bond)s?)\b"),
+              ("restatement", "Accounting problem", r"\b(restate(s|d|ment)?|accounting (irregularit|probe|error)\w*|auditor (resign|quit)\w*)\b"),
+              ("ma", "Merger / acquisition", r"\b(to acquire|acquires|acquisition of|agrees? to (buy|acquire|merge|sell)|merger|merge with|takeover|buyout|"
+                                            r"tender offer|deal to buy|bid for|offer to buy|in talks to (buy|acquire|merge)|spin[- ]?off|spins off|to sell (its |a |the )?(\w+ ){0,2}(unit|business|division|stake|brand|segment)|sells? (its )?(\w+ ){0,2}(unit|business|division)|divest\w*|completes? (the )?(acquisition|sale|merger))\b"),
+              ("earnings", "Earnings results", r"\b((first|second|third|fourth|1st|2nd|3rd|4th)[- ]quarter (\d{4} )?(results|earnings|profit|revenue|sales)|"
+                                               r"q[1-4] (\d{4} )?(results|earnings|profit|revenue|sales)|quarterly (results|earnings|profit|revenue|loss)|"
+                                               r"reports? (\w+ )?(results|earnings)|(beats?|miss(es)?|tops?|surpass\w*) (\w+ )?(estimates|expectations|forecasts)|"
+                                               r"(profit|earnings|revenue|sales) (beat|miss|top|jump|rise|fall|drop|slump|surge)s?|results (beat|miss|top))\b"),
+              ("guidance", "Guidance change", r"\b((raises?|lifts?|boosts?|hikes?|cuts?|lowers?|slashes?|reduces?|trims?|withdraws?|reaffirms?|maintains?|issues?) "
+                                              r"(its |the |full[- ]year |annual |\d{4} )*(guidance|outlook|forecast)|"
+                                              r"(guidance|outlook|forecast) (raised|cut|lowered|above|below|tops|misses|disappoints))\b"),
+              ("leadership", "CEO / CFO change", r"\b((ceo|cfo|chief executive|chief financial officer|chairman|president)\b[^.]{0,40}\b(steps? down|resign\w*|retire\w*|"
+                                                 r"to depart|departs?|leaves?|ousted|fired|replaced|succeed\w*)|(names?|appoints?|hires?|picks?|taps?) (\w+ ){0,4}(as )?(new )?(ceo|cfo|chief executive))\b"),
+              ("legal", "Lawsuit / investigation", r"\b(sues?|sued|lawsuit|class action|probe|investigat\w+|subpoena\w*|indict\w*|charged|charges against|antitrust|"
+                                                   r"fined?|penalt(y|ies)|settle(s|d|ment)|verdict|ruling against|doj|ftc|sec charges|consent decree)\b"),
+              ("regulatory", "Approval / recall", r"\b(fda (approv\w*|clears?|clearance|rejects?|declines?|grants?)|approv(es|ed|al) (of )?(its |the )?(drug|treatment|vaccine|device|therapy)|"
+                                                  r"complete response letter|recall\w*|clinical (trial|hold)|phase (2|3|ii|iii) (trial|data|results|study))\b"),
+              ("contract", "Major contract / deal", r"\b((wins?|awarded|lands?|secures?|signs?) (a |an )?(\$[\d.,]+ ?(billion|million|bn|m)? )?(\w+ ){0,3}(contract|deal|order|agreement)|"
+                                                   r"(contract|order|deal) (worth|valued at) \$|multi-?billion|\$[\d.,]+ ?(billion|bn) (contract|deal|order|investment|partnership))\b"),
+              ("capital", "Dividend / buyback", r"\b((raises?|hikes?|boosts?|increases?|cuts?|suspends?|slashes?|initiates?|declares? (a )?special) (its |the |quarterly )*dividend|"
+                                                r"dividend (cut|hike|increase|raise|suspension|boost)|(share|stock) (buyback|repurchase)|buyback|repurchase program|stock split)\b"),
+              ("layoffs", "Layoffs / restructuring", r"\b(layoffs?|lays? off|job cuts?|cut(s|ting)? (about |nearly |some |over )?(\d[\d,]* )?(\w+ )?(jobs|workers|staff|employees|positions|roles)|restructuring|plant closure|close (\d+ )?(stores|plants|factories))\b"),
+              ("rating", "Analyst / credit rating change", r"\b(upgrade[sd]?|downgrade[sd]?|initiates? coverage|price target (cut|raised|lowered|hiked)|(cuts?|raises?) (its |the )?price target|credit rating|outlook to (negative|positive))\b"),
+              ("index", "Index change", r"\b(added to|join(s|ing)?|removed from|dropped from|to replace \w+ in) the s&p 500\b|\bs&p 500 (addition|inclusion|rebalanc\w*)\b"),
+              ("move", "Big price move", r"\b(shares?|stock)\b[^.]{0,30}\b(soar\w*|surg\w*|plung\w*|plummet\w*|tumbl\w*|sink\w*|sank|crash\w*|skyrocket\w*|tank\w*|"
+                                         r"jump(s|ed)? \d+|(fall|fell|drop\w*|slid\w*|rall\w*|ris\w*|climb\w*|gain\w*|los\w*) (as much as |more than |nearly |over )?\d{1,3}(\.\d)?%)"),
+          ]
+          EVENT_RES = [(k, label, re.compile(rx, re.I)) for k, label, rx in EVENT_TYPES]
+          EVENT_LABEL = {k: label for k, label, _ in EVENT_TYPES}
+
+          # stories that look like events but are not news: holdings filings, listicles, opinion, roundups, podcasts
+          JUNK_RE = re.compile(
+              r"\b(new stake|stake in|position in|holdings? (in|of)|shares (sold|bought|acquired|purchased) by|(sells?|buys?|acquires?|purchases?) [\d,]+ shares|"
+              r"(sells?|buys?|acquires?) \$[\d.,]+ ?(million|thousand|k|m)? (worth )?(of )?(shares|stock)|insider (sell|buy)\w*|"
+              r"stocks? to (buy|watch|sell|avoid)|should you (buy|sell)|is it (time|too late) to|better buy|buy (now|the dip)|top \d+|\d+ (stocks|reasons|things)|"
+              r"price prediction|(stock|share) forecast|podcast|live updates?|live blog|what to watch|stock market today|market (wrap|recap|roundup)|"
+              r"morning (brief|briefing|bid)|week ahead|movers|trending|in focus|here'?s why|why (is )?\w+( \w+)? (stock|shares) (is |are )?(up|down|falling|rising|soaring|plunging)|"
+              r"(dividend|earnings) (calendar|preview|stocks)|ahead of earnings|earnings (preview|expectations|whisper)|what to expect|options (activity|traders)|unusual options|"
+              r"short interest|technical analysis|chart of the day|etf|mutual fund|vs\.? )\b", re.I)
+          JUNK_SOURCES = re.compile(r"marketbeat|etf daily news|defense world|the lincolnian|tickerreport|american banking news|zolmax|"
+                                    r"modern readers|the enterprise leader|thecerbatgems|motley fool|fool\.com|zacks|stock titan|simply wall|"
+                                    r"gurufocus|investorsobserver|ainvest|stocktwits|tipranks|marketscreener|dividend\.com", re.I)
+          MAJOR_SOURCES = re.compile(r"reuters|bloomberg|cnbc|associated press|\bap\b|wall street journal|wsj|financial times|\bft\b|barron|marketwatch|"
+                                     r"new york times|washington post|axios|the information|business insider|yahoo finance|fortune|forbes|cnn", re.I)
+          OFFICIAL_SOURCES = re.compile(r"pr newswire|business wire|globenewswire|globe newswire|sec filing|sec edgar", re.I)
+          # banks / rating agencies / exchanges are mostly the SOURCE of a story about another company, not its subject
+          COMMENTATORS = {"GS", "MS", "JPM", "C", "BAC", "WFC", "MCO", "SPGI", "MSCI", "ICE", "CME", "NDAQ", "BLK", "RJF", "SCHW", "CBOE", "FDS"}
+
+          # ── S&P 500 list ─────────────────────────────────────────────────────────────────────────────────────────────────
+          SUFFIX_RE = re.compile(r"[,.]?\s+(inc|incorporated|corp|corporation|co|company|companies|holdings?|group|plc|ltd|limited|n\.v|lp|l\.p|& co)\.?$", re.I)
+          ALIASES = {  # extra names the press uses
+              "GOOGL": ["Alphabet", "Google"], "GOOG": ["Alphabet", "Google"], "META": ["Meta Platforms", "Meta", "Facebook"],
+              "JPM": ["JPMorgan", "JP Morgan"], "XOM": ["Exxon", "ExxonMobil", "Exxon Mobil"], "DIS": ["Disney"], "BAC": ["Bank of America", "BofA"],
+              "JNJ": ["Johnson & Johnson", "J&J"], "PG": ["Procter & Gamble", "P&G"], "IBM": ["IBM"], "KO": ["Coca-Cola"], "LLY": ["Eli Lilly", "Lilly"],
+              "UNH": ["UnitedHealth"], "BRK.B": ["Berkshire Hathaway", "Berkshire"], "MCD": ["McDonald's", "McDonald’s"], "HD": ["Home Depot"],
+              "WMT": ["Walmart"], "COST": ["Costco"], "TSLA": ["Tesla"], "NVDA": ["Nvidia"], "AMD": ["AMD", "Advanced Micro Devices"], "AVGO": ["Broadcom"],
+              "GS": ["Goldman Sachs", "Goldman"], "MS": ["Morgan Stanley"], "C": ["Citigroup", "Citi"], "WFC": ["Wells Fargo"], "CVX": ["Chevron"],
+              "PFE": ["Pfizer"], "MRK": ["Merck"], "ABBV": ["AbbVie"], "BMY": ["Bristol Myers", "Bristol-Myers"], "UPS": ["UPS"], "FDX": ["FedEx"],
+              "BA": ["Boeing"], "LMT": ["Lockheed Martin", "Lockheed"], "RTX": ["RTX", "Raytheon"], "GE": ["GE Aerospace"], "GEV": ["GE Vernova"],
+              "GEHC": ["GE HealthCare"], "HPE": ["Hewlett Packard Enterprise", "HPE"], "HPQ": ["HP Inc"], "T": ["AT&T"], "VZ": ["Verizon"],
+              "CMCSA": ["Comcast"], "CSCO": ["Cisco"], "ORCL": ["Oracle"], "CRM": ["Salesforce"], "INTC": ["Intel"], "QCOM": ["Qualcomm"],
+              "TXN": ["Texas Instruments"], "MU": ["Micron"], "AMAT": ["Applied Materials"], "PYPL": ["PayPal"], "V": ["Visa Inc"], "MA": ["Mastercard"],
+              "AXP": ["American Express", "Amex"], "NKE": ["Nike"], "SBUX": ["Starbucks"], "CMG": ["Chipotle"], "UBER": ["Uber"], "ABNB": ["Airbnb"],
+              "NFLX": ["Netflix"], "AAPL": ["Apple"], "MSFT": ["Microsoft"], "AMZN": ["Amazon"], "DAL": ["Delta Air Lines"], "UAL": ["United Airlines"],
+              "LUV": ["Southwest Airlines"], "AAL": ["American Airlines"], "F": ["Ford Motor", "Ford"], "GM": ["General Motors", "GM"], "TGT": ["Target Corp"],
+              "PANW": ["Palo Alto Networks"], "CRWD": ["CrowdStrike"], "PLTR": ["Palantir"], "COIN": ["Coinbase"], "HOOD": ["Robinhood"],
+              "SMCI": ["Super Micro", "Supermicro"], "WBD": ["Warner Bros"], "PARA": ["Paramount"], "FOXA": ["Fox Corp"], "FOX": ["Fox Corp"],
+              "NWSA": ["News Corp"], "NWS": ["News Corp"], "MO": ["Altria"], "PM": ["Philip Morris"], "CAT": ["Caterpillar"], "DE": ["Deere", "John Deere"],
+              "MMM": ["3M"], "HON": ["Honeywell"], "ADBE": ["Adobe"], "NOW": ["ServiceNow"], "INTU": ["Intuit"], "AMGN": ["Amgen"], "GILD": ["Gilead"],
+              "VRTX": ["Vertex Pharmaceuticals"], "REGN": ["Regeneron"], "MRNA": ["Moderna"], "CVS": ["CVS"], "CI": ["Cigna"], "ELV": ["Elevance"],
+              "HUM": ["Humana"], "SCHW": ["Charles Schwab", "Schwab"], "BLK": ["BlackRock"], "SPGI": ["S&P Global"], "MCO": ["Moody's", "Moody’s"],
+          }
+          # company names that are also ordinary words or common names: only matched when the headline clearly means the company
+          # (ticker written next to it, "Inc"/"Corp", or followed by a business word like "shares", "CEO", "results")
+          AMBIG_WORDS = {"target", "ball", "southern", "progressive", "oracle", "visa", "fox", "news", "block", "booking", "dow", "carnival", "williams",
+                         "waters", "dover", "mosaic", "nasdaq", "hartford", "everest", "flex", "coherent", "casey's", "tko", "f5", "apa", "masco", "ross",
+                         "regions", "united", "american", "general", "public", "global", "equity", "edison", "lincoln", "jacobs", "gen", "erie", "arch",
+                         "brown", "steel", "veeva", "corpay", "vistra", "trimble", "ventas", "garmin", "cummins", "lennar", "delta", "carrier", "meta"}
+
+
+          def fetch(url, ua=UA_BROWSER, timeout=25, tries=2, headers=None):
+              h = {"User-Agent": ua, "Accept": "*/*"}
+              h.update(headers or {})
+              last = None
+              for i in range(tries):
+                  try:
+                      req = urllib.request.Request(url, headers=h)
+                      with urllib.request.urlopen(req, timeout=timeout) as r:
+                          return r.status, r.read().decode("utf-8", "replace")
+                  except urllib.error.HTTPError as e:
+                      last = e.code
+                      if e.code in (403, 404, 401):
+                          break
+                  except Exception as e:  # network error, timeout
+                      last = type(e).__name__
+                  time.sleep(1.5 * (i + 1))
+              return last, ""
+
+
+          def clean_name(n):
+              n = html.unescape(str(n or "")).replace("’", "'")
+              n = re.sub(r"\s*\((the|class [a-z]|eli)\)", "", n, flags=re.I).strip()
+              prev = None
+              while prev != n:
+                  prev = n
+                  n = SUFFIX_RE.sub("", n).strip(" ,.")
+              return n.strip()
+
+
+          def load_sp500(cache_path):
+              """Current S&P 500 members from Wikipedia: ticker, name, CIK, sector. Falls back to the last saved copy."""
+              try:
+                  import pandas as pd
+                  st, body = fetch("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", ua=SEC_UA)
+                  if st == 200:
+                      for t in pd.read_html(io.StringIO(body)):
+                          cols = [str(c) for c in t.columns]
+                          if "Symbol" in cols and "CIK" in cols:
+                              out = []
+                              for _, r in t.iterrows():
+                                  try:
+                                      cik = int(float(r["CIK"]))
+                                  except Exception:
+                                      cik = None
+                                  out.append({"ticker": str(r["Symbol"]).strip().replace("-", "."), "name": str(r["Security"]).strip(),
+                                              "sector": str(r.get("GICS Sector", "")), "cik": cik})
+                              if len(out) >= 480:
+                                  with open(cache_path, "w") as f:
+                                      json.dump(out, f)
+                                  return out, "Wikipedia (live)"
+              except Exception as e:
+                  print("S&P 500 list: Wikipedia failed:", e)
+              try:   # a public copy of the same list, kept up to date on GitHub
+                  import csv
+                  st, body = fetch("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv", ua=SEC_UA)
+                  if st == 200:
+                      out = []
+                      for r in csv.DictReader(io.StringIO(body)):
+                          try:
+                              cik = int(r.get("CIK") or 0) or None
+                          except ValueError:
+                              cik = None
+                          out.append({"ticker": r["Symbol"].strip().replace("-", "."), "name": r["Security"].strip(), "sector": r.get("GICS Sector", ""), "cik": cik})
+                      if len(out) >= 480:
+                          with open(cache_path, "w") as f:
+                              json.dump(out, f)
+                          return out, "GitHub copy of the Wikipedia list"
+              except Exception as e:
+                  print("S&P 500 list: GitHub copy failed:", e)
+              if os.path.exists(cache_path):
+                  with open(cache_path) as f:
+                      return json.load(f), "saved copy"
+              raise SystemExit("No S&P 500 list available")
+
+
+          class Matcher:
+              def __init__(self, members):
+                  self.by_ticker = {m["ticker"]: m for m in members}
+                  self.by_cik = {m["cik"]: m["ticker"] for m in members if m.get("cik")}
+                  self.pats = []
+                  for m in members:
+                      t = m["ticker"]
+                      names = set(ALIASES.get(t, []))
+                      base = clean_name(m["name"])
+                      if base and (len(base) >= 4 or base.isupper() or base.lower() in AMBIG_WORDS):
+                          names.add(base)
+                      full = re.sub(r"\s*\(.*?\)\s*", " ", html.unescape(m["name"]).replace("’", "'")).strip()
+                      if len(full) >= 4 or full.isupper():
+                          names.add(full)
+                          names.add(full.rstrip("."))
+                      words = sorted({n for n in names if n}, key=len, reverse=True)
+                      if not words:
+                          continue
+                      rx = re.compile(r"(?<![\w&])(" + "|".join(re.escape(w) for w in words) + r")(?:'s|’s)?(?![\w&])")
+                      self.pats.append((t, rx, words))
+
+              def find(self, title):
+                  """Tickers of S&P 500 companies named in a headline (case-sensitive name match + guards)."""
+                  found = []
+                  tl = " " + title + " "
+                  for t, rx, words in self.pats:
+                      m = rx.search(tl)
+                      if not m:
+                          continue
+                      if m.group(1).lower() in AMBIG_WORDS:
+                          tick = re.search(r"\(\s*(?:NYSE|NASDAQ|Nasdaq|NYSEARCA)?\s*:?\s*" + re.escape(t) + r"\s*\)|\$" + re.escape(t) + r"\b", tl)
+                          corp = re.search(re.escape(m.group(1)) + r"(?:'s|’s)? (?:Inc|Corp|Corporation|Co\b|shares|stock|CEO|CFO|earnings|results|revenue|profit|sales|to acquire|agrees|reports|beats|misses|raises|cuts|names|said)", tl)
+                          if not tick and not corp:
+                              continue
+                      found.append(t)
+                  # a bank or rating agency mentioned next to another company is the source, not the subject
+                  if len(found) > 1:
+                      subj = [t for t in found if t not in COMMENTATORS]
+                      if subj:
+                          found = subj
+                  return found
+
+              def find_for(self, title, etype):
+                  found = self.find(title)
+                  # "Moody's cuts US rating", "Goldman says…": a bank or agency alone in a rating story is the source, not the subject
+                  if etype == "rating" and found and all(t in COMMENTATORS for t in found):
+                      return []
+                  return found
+
+
+          # ── sources ──────────────────────────────────────────────────────────────────────────────────────────────────────
+          def parse_time(s):
+              if not s:
+                  return None
+              try:
+                  d = parsedate_to_datetime(s)
+              except Exception:
+                  try:
+                      d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                  except Exception:
+                      return None
+              if d.tzinfo is None:
+                  d = d.replace(tzinfo=timezone.utc)
+              return d.astimezone(timezone.utc)
+
+
+          def parse_rss(xml_text, default_source):
+              """RSS 2.0 or Atom → [{title, url, time, source}]"""
+              out = []
+              if not xml_text:
+                  return out
+              try:
+                  root = ET.fromstring(xml_text.encode("utf-8", "replace"))
+              except ET.ParseError:
+                  return out
+              ns = {"a": "http://www.w3.org/2005/Atom"}
+              for it in root.iter("item"):
+                  title = (it.findtext("title") or "").strip()
+                  src_el = it.find("source")
+                  src = (src_el.text or "").strip() if src_el is not None and src_el.text else default_source
+                  if default_source == "Google News" and src and title.endswith(" - " + src):
+                      title = title[: -len(" - " + src)].strip()
+                  out.append({"title": html.unescape(title), "url": (it.findtext("link") or "").strip(), "time": parse_time(it.findtext("pubDate")),
+                              "source": src or default_source, "via": default_source})
+              for e in root.findall("a:entry", ns):
+                  title = (e.findtext("a:title", default="", namespaces=ns) or "").strip()
+                  link = e.find("a:link", ns)
+                  out.append({"title": html.unescape(title), "url": link.get("href") if link is not None else "",
+                              "time": parse_time(e.findtext("a:updated", default="", namespaces=ns)), "source": default_source, "via": default_source,
+                              "summary": e.findtext("a:summary", default="", namespaces=ns) or ""})
+              return out
+
+
+          GOOGLE_EVENT_QUERIES = [
+              '"to acquire" OR "agrees to buy" OR merger OR takeover', '"quarterly results" OR "quarter results" OR "beats estimates" OR "misses estimates"',
+              '"raises guidance" OR "cuts guidance" OR "lowers outlook" OR "raises outlook" OR "cuts forecast"', '"CEO" "steps down" OR resigns OR "names new CEO"',
+              'FDA approves OR "FDA approval" OR recall', 'lawsuit OR probe OR investigation OR antitrust company shares',
+              '"dividend" raises OR cuts OR special OR "share buyback"', 'upgrade OR downgrade analyst shares', 'layoffs OR "job cuts" OR restructuring company',
+              '"contract" billion awarded OR wins', 'bankruptcy OR "chapter 11"', '"S&P 500" added OR join OR replace index', 'shares plunge OR soar OR tumble OR surge',
+          ]
+          CNBC_FEEDS = {"top news": 100003114, "business": 10001147, "earnings": 15839135, "finance": 10000664, "technology": 19854910,
+                        "health care": 10000108, "energy": 19836768, "investing": 15839069, "markets": 20910258}
+          WIRE_FEEDS = {
+              "PR Newswire": ["https://www.prnewswire.com/rss/news-releases-list.rss", "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss"],
+              "GlobeNewswire": ["https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"],
+              "Business Wire": ["https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeGVtRWA=="],
+          }
+          AP_FEEDS = ["https://apnews.com/hub/business.rss", "https://feedx.net/rss/ap.xml", "https://rsshub.app/apnews/topics/business"]
+
+
+          def google_news(q):
+              url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(q + " when:1d") + "&hl=en-US&gl=US&ceid=US:en"
+              st, body = fetch(url)
+              return st, parse_rss(body, "Google News")
+
+
+          def sec_8k(pages=3):
+              out, status = [], None
+              for p in range(pages):
+                  url = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&start=%d&count=100&output=atom" % (p * 100))
+                  st, body = fetch(url, ua=SEC_UA, headers={"Accept-Encoding": "identity"})
+                  status = st
+                  if st != 200:
+                      break
+                  for e in parse_rss(body, "SEC filing"):
+                      m = re.search(r"\((\d{4,10})\)", e["title"])
+                      if not m:
+                          continue
+                      e["cik"] = int(m.group(1))
+                      e["items"] = sorted(set(re.findall(r"Item (\d\.\d\d)", html.unescape(e.get("summary", "")))))
+                      e["form"] = e["title"].split(" - ")[0].strip()
+                      out.append(e)
+                  time.sleep(0.3)
+              return status, out
+
+
+          SEC_ITEMS = {  # 8-K item → (event type, plain words). Routine items are left out.
+              "1.01": ("contract", "Signed a major agreement"), "1.02": ("contract", "Ended a major agreement"), "1.03": ("bankruptcy", "Bankruptcy or receivership"),
+              "1.05": ("legal", "Cybersecurity incident"), "2.01": ("ma", "Completed an acquisition or sale of assets"), "2.02": ("earnings", "Quarterly results released"),
+              "2.04": ("bankruptcy", "Debt payment triggered early"), "2.05": ("layoffs", "Restructuring / layoffs"), "2.06": ("restatement", "Write-down of assets (impairment)"),
+              "3.01": ("restatement", "Delisting warning from the exchange"), "4.01": ("restatement", "Changed its auditor"),
+              "4.02": ("restatement", "Past financial statements can no longer be relied on"), "5.01": ("ma", "Change in control of the company"),
+              "5.02": ("leadership", "A top executive or director is leaving or joining"),
+          }
+
+
+          def finnhub_news(key):
+              out = []
+              for cat in ("general", "merger"):
+                  st, body = fetch("https://finnhub.io/api/v1/news?category=%s&token=%s" % (cat, key), ua=SEC_UA)
+                  if st != 200:
+                      return st, out
+                  for n in json.loads(body or "[]"):
+                      out.append({"title": n.get("headline", ""), "url": n.get("url", ""), "source": n.get("source") or "Finnhub", "via": "Finnhub",
+                                  "time": datetime.fromtimestamp(n["datetime"], timezone.utc) if n.get("datetime") else None})
+              return 200, out
+
+
+          def nasdaq_moves(tickers, min_pct=7.0):
+              """Big price moves today for S&P 500 stocks — Nasdaq's public stock screener, one request, no key."""
+              st, body = fetch("https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&download=true", timeout=60,
+                               headers={"Accept": "application/json,*/*", "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/"})
+              if st != 200:
+                  return st, {}, 0
+              want, moves = set(tickers), {}
+              rows = ((json.loads(body or "{}").get("data") or {}).get("rows") or [])
+              for r in rows:
+                  t = str(r.get("symbol", "")).strip().upper().replace("/", ".").replace("-", ".")
+                  try:
+                      pct = float(str(r.get("pctchange", "")).replace("%", "").replace(",", ""))
+                  except ValueError:
+                      continue
+                  if t in want and abs(pct) >= min_pct:
+                      moves[t] = round(pct, 1)
+              return 200, moves, len(rows)
+
+
+          def tiingo_moves(key, tickers, min_pct=7.0):
+              """Big price moves today for S&P 500 stocks (one bulk request). Returns status, {ticker: pct}."""
+              st, body = fetch("https://api.tiingo.com/iex/?token=" + urllib.parse.quote(key), ua=SEC_UA, timeout=60)
+              if st != 200:
+                  return st, {}
+              want, moves = set(tickers), {}
+              for q in json.loads(body or "[]"):
+                  t = str(q.get("ticker", "")).upper().replace("-", ".")
+                  last, prev = q.get("last") or q.get("tngoLast"), q.get("prevClose")
+                  if t in want and last and prev:
+                      pct = (last / prev - 1) * 100
+                      if abs(pct) >= min_pct:
+                          moves[t] = round(pct, 1)
+              return 200, moves
+
+
+          # ── classify + merge ─────────────────────────────────────────────────────────────────────────────────────────────
+          def event_type(title):
+              if JUNK_RE.search(title):
+                  return None
+              for k, _, rx in EVENT_RES:
+                  if rx.search(title):
+                      return k
+              return None
+
+
+          def norm_title(t):
+              return re.sub(r"[^a-z0-9 ]", "", t.lower())[:90]
+
+
+          def build(stories, matcher, sec_filings, moves, prev_events):
+              """stories: [{title,url,time,source,via}] → merged events."""
+              cutoff = NOW - timedelta(hours=KEEP_HOURS)
+              events = {}
+
+              def add(t, etype, s, official=False, sec=None):
+                  tm = s.get("time") or NOW
+                  if tm < cutoff or tm > NOW + timedelta(hours=2):
+                      return
+                  key = (t, etype)
+                  ev = events.get(key)
+                  if ev is None:
+                      m = matcher.by_ticker[t]
+                      ev = events[key] = {"ticker": t, "name": m["name"], "sector": m.get("sector", ""), "type": etype, "label": EVENT_LABEL[etype],
+                                          "headline": s["title"], "url": s["url"], "source": s["source"], "time": tm.isoformat(), "first": tm.isoformat(),
+                                          "official": False, "reports": []}
+                  if any(r["source"].lower() == s["source"].lower() for r in ev["reports"]):
+                      pass
+                  else:
+                      ev["reports"].append({"source": s["source"], "url": s["url"], "headline": s["title"], "time": tm.isoformat()})
+                  if official:
+                      ev["official"] = True
+                  if sec:
+                      ev["sec"] = sec
+                  # the headline shown: an official release first, then a major outlet, then the earliest report
+                  def rank(r):
+                      return (0 if OFFICIAL_SOURCES.search(r["source"]) else 1 if MAJOR_SOURCES.search(r["source"]) else 2, r["time"])
+                  best = sorted([r for r in ev["reports"] if r["source"] != "SEC filing"] or ev["reports"], key=rank)[0]
+                  ev.update({"headline": best["headline"], "url": best["url"], "source": best["source"]})
+                  ev["time"] = max(r["time"] for r in ev["reports"])
+                  ev["first"] = min(r["time"] for r in ev["reports"])
+
+              seen = set()
+              for s in stories:
+                  title = (s.get("title") or "").strip()
+                  if not title or JUNK_SOURCES.search(s.get("source") or "") or JUNK_SOURCES.search(s.get("url") or ""):
+                      continue
+                  k = norm_title(title) + "|" + (s.get("source") or "").lower()
+                  if k in seen:
+                      continue
+                  seen.add(k)
+                  et = event_type(title)
+                  if not et:
+                      continue
+                  tick = matcher.find_for(title, et)
+                  if not tick or len(tick) > 3:      # 4+ companies in one headline = a roundup, not an event
+                      continue
+                  for t in tick:
+                      add(t, et, s, official=bool(OFFICIAL_SOURCES.search(s.get("source") or "")))
+
+              for f in sec_filings:
+                  t = matcher.by_cik.get(f["cik"])
+                  if not t or not f["form"].startswith("8-K"):
+                      continue
+                  known = [SEC_ITEMS[i] for i in f["items"] if i in SEC_ITEMS]
+                  if not known:
+                      continue
+                  etype, words = known[0]
+                  sec = {"form": f["form"], "items": [SEC_ITEMS[i][1] for i in f["items"] if i in SEC_ITEMS], "url": f["url"], "date": (f["time"] or NOW).date().isoformat()}
+                  add(t, etype, {"title": matcher.by_ticker[t]["name"] + ": " + words, "url": f["url"], "source": "SEC filing", "time": f["time"]}, official=True, sec=sec)
+
+              for t, pct in moves.items():
+                  if t in matcher.by_ticker:
+                      add(t, "move", {"title": "%s shares %s %.1f%% today" % (matcher.by_ticker[t]["name"], "up" if pct > 0 else "down", abs(pct)),
+                                      "url": "", "source": "Price data", "time": NOW})
+
+              # keep events from earlier runs that are still inside the window (a story can drop out of a feed)
+              for ev in prev_events or []:
+                  key = (ev["ticker"], ev["type"])
+                  try:
+                      if datetime.fromisoformat(ev["time"]) < cutoff:
+                          continue
+                  except Exception:
+                      continue
+                  if key not in events and ev["ticker"] in matcher.by_ticker:
+                      events[key] = ev
+                  elif key in events:
+                      cur = events[key]
+                      for r in ev.get("reports", []):
+                          if not any(x["source"].lower() == r["source"].lower() for x in cur["reports"]):
+                              cur["reports"].append(r)
+                      cur["first"] = min(cur["first"], ev.get("first", cur["first"]))
+                      cur["official"] = cur["official"] or ev.get("official", False)
+                      if ev.get("sec") and not cur.get("sec"):
+                          cur["sec"] = ev["sec"]
+
+              out = []
+              for ev in events.values():
+                  names = {r["source"].lower() for r in ev["reports"] if r["source"] != "Price data"}
+                  ev["sourceCount"] = len(names)
+                  # a lone "Big price move" from price data alone is kept; any other event needs a real report
+                  if not names and ev["type"] != "move":
+                      continue
+                  out.append(ev)
+              out.sort(key=lambda e: e["time"], reverse=True)
+              return out
+
+
+          # ── main ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+          def main():
+              out_path = sys.argv[1] if len(sys.argv) > 1 else "news.json"
+              report_path = sys.argv[2] if len(sys.argv) > 2 else None
+              state_dir = os.path.dirname(os.path.abspath(out_path))
+              members, list_src = load_sp500(os.path.join(state_dir, "sp500.json"))
+              matcher = Matcher(members)
+              tickers = [m["ticker"] for m in members]
+              status, stories = {}, []
+
+              def note(name, st, n, extra=""):
+                  status[name] = {"ok": st == 200 and n > 0, "http": st, "items": n, "note": extra}
+                  print(f"  {name}: HTTP {st}, {n} items {extra}")
+
+              for q in GOOGLE_EVENT_QUERIES:
+                  st, items = google_news(q)
+                  stories += items
+                  note("Google News: " + q[:40], st, len(items))
+                  time.sleep(1.0)
+              # rotate through the companies: a slice each run, so every company gets its own search every few hours
+              slice_n = int(os.environ.get("COMPANY_SLICE", "60"))
+              start = (int(NOW.timestamp() // 1800) * slice_n) % len(members)
+              rot = (members + members)[start:start + slice_n]
+              g_ok = g_items = 0
+              for m in rot:
+                  st, items = google_news('"%s"' % (ALIASES.get(m["ticker"], [clean_name(m["name"])])[0]))
+                  g_ok += st == 200
+                  g_items += len(items)
+                  stories += items
+                  time.sleep(0.8)
+              note("Google News: company searches (%d this run)" % len(rot), 200 if g_ok else "fail", g_items, f"{g_ok}/{len(rot)} answered")
+              for name, fid in CNBC_FEEDS.items():
+                  st, body = fetch("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=%d" % fid)
+                  items = parse_rss(body, "CNBC")
+                  stories += items
+                  note("CNBC: " + name, st, len(items))
+              for name, urls in WIRE_FEEDS.items():
+                  for u in urls:
+                      st, body = fetch(u)
+                      items = parse_rss(body, name)
+                      stories += items
+                      note(name + ": " + u.split("/")[-1][:40], st, len(items))
+              for u in AP_FEEDS:
+                  st, body = fetch(u)
+                  items = parse_rss(body, "AP")
+                  for i in items:
+                      i["source"] = "Associated Press"
+                  stories += items
+                  note("AP: " + u.split("/")[2], st, len(items))
+              st, filings = sec_8k()
+              note("SEC 8-K live list", st, len(filings))
+              if os.environ.get("FINNHUB_KEY"):
+                  st, items = finnhub_news(os.environ["FINNHUB_KEY"])
+                  stories += items
+                  note("Finnhub market news", st, len(items))
+              else:
+                  note("Finnhub market news", "no key", 0, "(FINNHUB_KEY secret not set — skipped)")
+              st, moves, nrows = nasdaq_moves(tickers)
+              note("Nasdaq price moves (≥7% today)", st, nrows, "(%d big moves among S&P 500)" % len(moves) if st == 200 else "")
+              if not moves and os.environ.get("TIINGO_KEY"):
+                  st, moves = tiingo_moves(os.environ["TIINGO_KEY"], tickers)
+                  note("Tiingo price moves (≥7%)", st, len(moves) if st == 200 else 0, "(%d big moves)" % len(moves) if st == 200 else "")
+              else:
+                  note("Tiingo price moves (backup)", "not needed" if moves else "no key", 0, "")
+
+              prev = []
+              if os.path.exists(out_path):
+                  try:
+                      with open(out_path) as f:
+                          prev = json.load(f).get("events", [])
+                  except Exception:
+                      prev = []
+              events = build(stories, matcher, filings, moves, prev)
+              doc = {"asOf": NOW.isoformat(), "windowHours": KEEP_HOURS, "companies": len(members), "listSource": list_src,
+                     "storiesRead": len(stories), "sources": status, "events": events}
+              with open(out_path, "w") as f:
+                  json.dump(doc, f, separators=(",", ":"))
+              print(f"S&P 500 list: {len(members)} ({list_src}) · stories read: {len(stories)} · events kept: {len(events)}")
+
+              if report_path:
+                  lines = ["# S&P 500 news scan — source check", "", f"Run: {NOW.strftime('%Y-%m-%d %H:%M UTC')} · S&P 500 list: {len(members)} companies ({list_src})",
+                           f"Stories read: {len(stories)} · Important events kept (last {KEEP_HOURS}h): {len(events)}", "",
+                           "| Source | Works? | HTTP | Items | Note |", "|---|---|---|---|---|"]
+                  for k, v in status.items():
+                      lines.append(f"| {k} | {'yes' if v['ok'] else 'NO'} | {v['http']} | {v['items']} | {v['note']} |")
+                  by_type = {}
+                  for e in events:
+                      by_type[e["label"]] = by_type.get(e["label"], 0) + 1
+                  lines += ["", "## Events by type", ""] + [f"- {k}: {v}" for k, v in sorted(by_type.items(), key=lambda x: -x[1])]
+                  lines += ["", "## All events (newest first)", "", "| Ticker | Type | Sources | Headline | Source |", "|---|---|---|---|---|"]
+                  for e in events:
+                      lines.append(f"| {e['ticker']} | {e['label']} | {e['sourceCount']}{' · official' if e['official'] else ''} | {e['headline'][:110].replace('|', '/')} | {e['source']} |")
+                  os.makedirs(os.path.dirname(os.path.abspath(report_path)), exist_ok=True)
+                  with open(report_path, "w") as f:
+                      f.write("\n".join(lines) + "\n")
+
+
+          if __name__ == "__main__":
+              main()
+
+          PYEOF
+          python /tmp/scan/news_scan.py /tmp/scan/news.json reports/news-scan.md
+      - name: Save the report to the repo
+        run: |
+          git config user.name "news-scan"
+          git config user.email "actions@users.noreply.github.com"
+          git add reports/news-scan.md
+          git commit -m "News scan report" || echo "nothing to commit"
+          git push
