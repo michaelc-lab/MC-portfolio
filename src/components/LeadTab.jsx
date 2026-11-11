@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { APPS_SCRIPT_URL, jsonp, safeUrl } from '../lib/api'
+import { APPS_SCRIPT_URL, jsonp, safeUrl, fetchNews, stripSource } from '../lib/api'
 import { TrendingUp, TrendingDown, Zap, AlertTriangle, Calendar } from 'lucide-react'
 import { fmtPrice, fmtPct } from '../lib/utils'
 
@@ -331,91 +331,98 @@ const rdAge = iso => {
   return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd'
 }
 const rdAgoLong = iso => { const a = rdAge(iso); return a ? a.replace(/m$/, ' min').replace(/h$/, 'h').replace(/d$/, 'd') + ' ago' : '' }
-const rdClean = (h, ticker) => {
-  let s = String(h || '')
-    .replace(/\((?:NASDAQ|NYSE|NYSE American|AMEX|OTC|Nasdaq)\s*:\s*[A-Z.]+\)/g, '')
-    .replace(new RegExp('\\(' + ticker + '(?:\\.US)?\\)', 'g'), '')
-    .replace(new RegExp('^' + ticker + '\\s+(Stock|Shares)\\s*[:\\-–]?\\s*', 'i'), '')
-    .replace(/\$[A-Z]{1,5}\b/g, '').replace(/\s+-\s+[A-Z][\w .&]+$/, '').replace(/\s{2,}/g, ' ').trim()
-  if (s.length > 92) s = s.slice(0, 89).replace(/\s+\S*$/, '') + '…'
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
 
-const rdLinkPlain = s => s.link === 'named' ? 'The company is named in the story'
-  : s.link === 'ai' ? 'Linked to the company by AI — not named in the story itself'
-  : s.link === 'name' ? 'Matched by company name' : 'Industry story: ' + (s.via || '')
+const SEC_PLAIN = items => (items || []).join(' · ')
 
-function NewsDetails({ s, onAnalyze }) {
+function NewsDetails({ e, onAnalyze }) {
+  const reports = (e.reports || []).filter(r => r.source !== 'Price data')
   return (
     <div className="mt-1 mb-3 rounded-lg border border-white/10 bg-white/[0.02] p-4 font-display">
-      <a href={safeUrl(s.url) || undefined} target="_blank" rel="noopener noreferrer" className="text-[13px] text-slate-200 hover:text-white leading-snug">{s.headline} ↗</a>
-      <div className="text-[11px] text-slate-500 mt-1">{s.source}{s.time ? ' · ' + rdAgoLong(s.time) : ''}{s.sources > 1 ? ` · reported by ${s.sources} sources` : ''}</div>
-      <div className="mt-3 space-y-1.5 text-[12px] text-slate-400">
-        <div>{rdLinkPlain(s)}</div>
-        {s.sec && <div>The company also filed {/^8/.test(s.sec.form) ? 'an' : 'a'} <a href={safeUrl(s.sec.url) || undefined} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.sec.form} on {s.sec.date}</a> — open it to see if it's related</div>}
-        {s.evidence && !s.aiOnly && <div>Source quote: {safeUrl(s.evidenceUrl) ? <a href={safeUrl(s.evidenceUrl)} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a> : s.evidence}</div>}
-        {s.role === 'target' && <div>This company is the target of a proposed acquisition</div>}
-      </div>
-      <button onClick={() => onAnalyze && onAnalyze(s.ticker)} className="mt-3 text-[12px] text-electric-400 hover:text-electric-300">Open full analysis →</button>
+      <div className="text-[11px] text-slate-500 mb-2">{e.name} · {e.label}{e.sector ? ' · ' + e.sector : ''}</div>
+      {reports.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-[11px] text-slate-500">Reported by {reports.length} source{reports.length === 1 ? '' : 's'}</div>
+          {reports.slice(0, 8).map((r, i) => (
+            <div key={i} className="text-[12px] text-slate-300 leading-snug">
+              <span className="text-slate-500">{r.source}:</span>{' '}
+              {safeUrl(r.url) ? <a href={safeUrl(r.url)} target="_blank" rel="noopener noreferrer" className="hover:text-white hover:underline">{stripSource(r.headline, r.source)} ↗</a> : stripSource(r.headline, r.source)}
+            </div>
+          ))}
+          {reports.length > 8 && <div className="text-[11px] text-slate-600">+{reports.length - 8} more</div>}
+        </div>
+      )}
+      {e.sec && <div className="mt-3 text-[12px] text-slate-400">Official filing ({e.sec.form}, {e.sec.date}): {safeUrl(e.sec.url) ? <a href={safeUrl(e.sec.url)} target="_blank" rel="noopener noreferrer" className="hover:underline">{SEC_PLAIN(e.sec.items)} ↗</a> : SEC_PLAIN(e.sec.items)}</div>}
+      <button onClick={() => onAnalyze && onAnalyze(e.ticker)} className="mt-3 text-[12px] text-electric-400 hover:text-electric-300">Open full analysis →</button>
     </div>
   )
 }
 
-// ── News on your stocks — a plain feed: what was reported, where, when. No buy/sell calls (they didn't beat chance). ──
-export function NewsFeed({ onAnalyze, isMobile, names }) {
+// ── Important news — every S&P 500 company, several sources, no buy/sell direction ──
+export function NewsFeed({ onAnalyze, isMobile, mine = [] }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
   const [openKey, setOpenKey] = useState(null)
+  const [scope, setScope] = useState('all')      // 'all' | 'mine'
+  const [showSmall, setShowSmall] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  const fetched = useRef(false)
 
-  useEffect(() => {
-    if (fetched.current) return
-    fetched.current = true
-    jsonp(`${APPS_SCRIPT_URL}?action=getNewsRadar`).then(d => setData(d)).catch(e => setErr(e.message))
-  }, [])
+  useEffect(() => { let alive = true; fetchNews().then(d => alive && setData(d)).catch(e => alive && setErr(e.message)); return () => { alive = false } }, [])
 
-  const meta = data && data.meta
-  const t = s => s.time ? new Date(s.time).getTime() : 0
-  const items = ((data && data.signals) || []).slice().sort((a, b) => t(b) - t(a))   // newest first
-  const shown = showAll ? items : items.slice(0, 10)
-  const key = s => s.ticker + '|' + (s.time || '')
+  const mineSet = new Set((mine || []).map(t => String(t).toUpperCase()))
+  const t = e => new Date(e.time).getTime() || 0
+  const all = ((data && data.events) || []).slice().sort((a, b) => t(b) - t(a))
+  const scoped = scope === 'mine' ? all.filter(e => mineSet.has(e.ticker)) : all
+  const main = scoped.filter(e => e.tier !== 2), small = scoped.filter(e => e.tier === 2)
+  const list = showSmall ? scoped : main
+  const shown = showAll ? list : list.slice(0, 12)
+  const key = e => e.ticker + '|' + e.type
+  const nMine = all.filter(e => mineSet.has(e.ticker)).length
+  const chip = (id, label) => (
+    <button key={id} onClick={() => { setScope(id); setShowAll(false) }} aria-pressed={scope === id}
+      className={`text-[12px] px-3 py-1 rounded-md border transition-colors ${scope === id ? 'border-electric-400/60 bg-electric-500/15 text-slate-100' : 'border-white/10 text-slate-400 hover:text-slate-200'}`}>{label}</button>
+  )
+  const more = (r) => { const n = (r.sourceCount || 1) - 1; return n > 0 ? ` +${n}` : '' }
 
   return (
     <div className="panel p-5 font-display" data-testid="news-feed">
-      <div className="flex items-baseline gap-3 flex-wrap mb-4">
-        <span className="text-[16px] text-slate-100">News on your stocks</span>
-        {meta && <span className="text-[12px] text-slate-500">Updated {rdAgoLong(meta.lastRun)} · last 2 days</span>}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <div className="flex items-baseline gap-3 flex-wrap">
+          <span className="text-[16px] text-slate-100">Important news</span>
+          {data && data.asOf && <span className="text-[12px] text-slate-500">S&amp;P 500 · updated {rdAgoLong(data.asOf)} · last 2 days</span>}
+        </div>
+        <div className="flex gap-2">{chip('all', 'All S&P 500')}{chip('mine', `My stocks${data ? ' (' + nMine + ')' : ''}`)}</div>
       </div>
 
-      {!data && !err && <div className="py-8 text-center text-[12px] text-slate-500 animate-pulse">Reading the news…</div>}
-      {err && <div className="py-8 text-center text-[12px] text-terminal-red">{err}</div>}
-      {data && !meta && <div className="py-8 text-center text-[12px] text-slate-500">Not started yet — run installNewsRadarTrigger once in Apps Script.</div>}
-      {data && meta && !items.length && (meta.headlines === 0
-        ? <div className="py-8 text-center text-[13px] text-terminal-amber">No headlines received — the news feeds may be down. This is not a quiet day.</div>
-        : <div className="py-8 text-center text-[13px] text-slate-500">No news on your stocks in the last 2 days.</div>)}
+      {!data && !err && <div className="py-8 text-center text-[12px] text-slate-500 animate-pulse">Loading the news…</div>}
+      {err && <div className="py-8 text-center text-[12px] text-terminal-amber">News unavailable right now — {err}</div>}
+      {data && !data.asOf && <div className="py-8 text-center text-[12px] text-slate-500">The news scanner hasn't run yet.</div>}
+      {data && data.asOf && !list.length && (
+        <div className="py-8 text-center text-[13px] text-slate-500">{scope === 'mine' ? 'No important news on your S&P 500 stocks in the last 2 days.' : 'No important news in the last 2 days.'}</div>
+      )}
 
-      {items.length > 0 && (
+      {shown.length > 0 && (
         <div className="border-t border-white/5">
-          {shown.map(s => {
-            const k = key(s), open = openKey === k
+          {shown.map(e => {
+            const k = key(e), open = openKey === k, yours = mineSet.has(e.ticker)
             return (
               <div key={k} className="border-b border-white/5">
                 <button onClick={() => setOpenKey(open ? null : k)} aria-expanded={open} className="w-full flex items-center gap-3 py-2.5 text-left hover:bg-white/[0.02]">
-                  <span className="font-mono text-[13px] text-slate-200 w-14 flex-shrink-0">{s.ticker}</span>
-                  <span className={`text-[13px] text-slate-300 flex-1 min-w-0 ${isMobile ? '' : 'truncate'}`}>{rdClean(s.headline, s.ticker)}</span>
-                  {!isMobile && <span className="text-[11px] text-slate-600 flex-shrink-0 max-w-[140px] truncate">{s.source}</span>}
-                  <span className="text-[11px] text-slate-600 w-8 text-right flex-shrink-0">{rdAge(s.time)}</span>
+                  <span className="font-mono text-[13px] text-slate-200 w-14 flex-shrink-0">{e.ticker}{yours && <span title="One of your stocks" className="text-electric-400"> •</span>}</span>
+                  {!isMobile && <span className="text-[11px] text-slate-500 w-[150px] flex-shrink-0 truncate">{e.label}</span>}
+                  <span className={`text-[13px] text-slate-300 flex-1 min-w-0 ${isMobile ? '' : 'truncate'}`}>{stripSource(e.headline, e.source)}</span>
+                  {!isMobile && <span className="text-[11px] text-slate-500 flex-shrink-0 max-w-[170px] truncate">{e.official ? 'Official · ' : ''}{e.source}{more(e)}</span>}
+                  <span className="text-[11px] text-slate-600 w-8 text-right flex-shrink-0">{rdAge(e.time)}</span>
                 </button>
-                {open && <NewsDetails s={s} onAnalyze={onAnalyze} />}
+                {open && <NewsDetails e={e} onAnalyze={onAnalyze} />}
               </div>
             )
           })}
         </div>
       )}
-      {items.length > 10 && (
-        <button onClick={() => setShowAll(v => !v)} className="mt-2 text-[12px] text-slate-500 hover:text-slate-300">{showAll ? 'Show less' : `Show ${items.length - 10} more`}</button>
-      )}
+      <div className="flex gap-4 mt-2">
+        {list.length > 12 && <button onClick={() => setShowAll(v => !v)} className="text-[12px] text-slate-500 hover:text-slate-300">{showAll ? 'Show less' : `Show ${list.length - 12} more`}</button>}
+        {small.length > 0 && <button onClick={() => setShowSmall(v => !v)} className="text-[12px] text-slate-500 hover:text-slate-300">{showSmall ? 'Hide smaller stories' : `+ ${small.length} smaller stories (one minor source)`}</button>}
+      </div>
     </div>
   )
 }
@@ -471,8 +478,8 @@ export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
       </div>
 
 
-      {/* News on your stocks */}
-      <NewsFeed onAnalyze={onAnalyze} isMobile={isMobile} names={Object.fromEntries((portfolio || []).map(r => [r.ticker, r.company]))} />
+      {/* Important news — S&P 500 */}
+      <NewsFeed onAnalyze={onAnalyze} isMobile={isMobile} mine={(portfolio || []).map(r => r.ticker)} />
 
       {/* Daily movers */}
       <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>

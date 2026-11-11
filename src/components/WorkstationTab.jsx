@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { APPS_SCRIPT_URL, jsonp, safeUrl } from '../lib/api'
+import { APPS_SCRIPT_URL, jsonp, safeUrl, fetchNews, stripSource } from '../lib/api'
 import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Sparkles } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
@@ -134,7 +134,7 @@ const TOOLTIPS = {
 
   insiderActivity: `<b>Insider Activity</b> — executives buying/selling their own stock.<br/>
     🟢 Open Mkt Buy = strong bullish signal<br/>
-    ⚪ Plan/ESPP Buy = payroll-plan purchase, not a discretionary bet — excluded from the verdict<br/>
+    ⚪ Plan/ESPP Buy = payroll-plan purchase, not a discretionary bet — not counted as a buy<br/>
     🔴 Open Mkt Sale = may be liquidity, not bearish<br/><br/>
     <i>Buys are meaningful. Sales are often planned (diversification, taxes) — less significant unless large &amp; sudden</i>`,
 }
@@ -489,7 +489,7 @@ export function earningsRow(e, now = new Date()) {
   const hr = e.hour === 'bmo' ? ', before the open' : e.hour === 'amc' ? ', after the close' : ''
   return { tone: d <= 7 ? 'warn' : 'info', dir: 0, soon: d <= 7 ? 'close' : false, text: `Earnings ${when} (${fmtDay(e.date)}${hr})${d <= 7 ? ' — expect a big move either way' : ''}` }
 }
-export function decisionRows(data, board, now = new Date()) {
+export function decisionRows(data, board, now = new Date(), news = null) {
   const rows = []
   const pc = data.priceCheck || {}
   rows.push(pc.status === 'ok' ? { tone: 'ok', dir: 0, text: `Price confirmed by two sources (Google Finance ${fmtPrice(pc.gf)} · Finnhub ${fmtPrice(pc.fh)})` }
@@ -500,16 +500,25 @@ export function decisionRows(data, board, now = new Date()) {
   if (er) rows.push(er)
   // the calendar didn't answer: say so — never let "no row" read as "no earnings soon"
   else if (data.earningsOn === false) rows.push({ tone: 'warn', dir: 0, soon: 'unknown', text: "Earnings date unknown — the calendar didn't answer. Check before trading" })
-  const rdAge = board && !board.error && board.meta ? hoursAgo(board.meta.lastRun, now) : null
-  if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
-  else if (board.error) rows.push({ tone: 'na', dir: 0, text: 'News unavailable right now' })
-  else if (rdAge != null && rdAge > 2) rows.push({ tone: 'na', dir: 0, text: `News last updated ${Math.round(rdAge)} h ago` })
-  else if (board.meta && board.meta.headlines === 0) rows.push({ tone: 'na', dir: 0, text: 'News unavailable — no headlines received (feeds may be down)' })
-  else {
-    const sig = (board.signals || []).find(x => x.ticker === data.ticker)
-    rows.push(!sig ? { tone: 'na', dir: 0, text: 'No news on this stock in the last 2 days' }
-      : { tone: 'info', dir: 0, url: sig.url, text: `In the news: ${sig.headline}${sig.source ? ' — ' + sig.source : ''}`,
-          sub: sig.sec ? `The company also filed ${/^8/.test(sig.sec.form) ? 'an' : 'a'} ${sig.sec.form} on ${sig.sec.date} — open it to see if it's related` : null, subUrl: sig.sec ? sig.sec.url : null })
+  // News: the S&P 500 news scanner first (several sources, important events only); the older news check covers the rest
+  const ev = news && Array.isArray(news.events) ? news.events.filter(e => e.ticker === data.ticker)
+    .sort((a, b) => (a.tier || 1) - (b.tier || 1) || new Date(b.time) - new Date(a.time))[0] : null
+  if (ev) {
+    const n = (ev.sourceCount || 1) - 1
+    rows.push({ tone: 'info', dir: 0, url: ev.url, text: `In the news: ${ev.label} — ${stripSource(ev.headline, ev.source)} — ${ev.official ? 'official, ' : ''}${ev.source}${n > 0 ? ` +${n} source${n === 1 ? '' : 's'}` : ''}`,
+      sub: ev.sec ? `Official filing (${ev.sec.form}) on ${ev.sec.date}: ${(ev.sec.items || []).join(', ')}` : null, subUrl: ev.sec ? ev.sec.url : null })
+  } else {
+    const rdAge = board && !board.error && board.meta ? hoursAgo(board.meta.lastRun, now) : null
+    if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
+    else if (board.error) rows.push({ tone: 'na', dir: 0, text: 'News unavailable right now' })
+    else if (rdAge != null && rdAge > 2) rows.push({ tone: 'na', dir: 0, text: `News last updated ${Math.round(rdAge)} h ago` })
+    else if (board.meta && board.meta.headlines === 0) rows.push({ tone: 'na', dir: 0, text: 'News unavailable — no headlines received (feeds may be down)' })
+    else {
+      const sig = (board.signals || []).find(x => x.ticker === data.ticker)
+      rows.push(!sig ? { tone: 'na', dir: 0, text: 'No news on this stock in the last 2 days' }
+        : { tone: 'info', dir: 0, url: sig.url, text: `In the news: ${stripSource(sig.headline, sig.source)}${sig.source ? ' — ' + sig.source : ''}`,
+            sub: sig.sec ? `The company also filed ${/^8/.test(sig.sec.form) ? 'an' : 'a'} ${sig.sec.form} on ${sig.sec.date} — open it to see if it's related` : null, subUrl: sig.sec ? sig.sec.url : null })
+    }
   }
   if (data.secOn) {
     const f = (data.sec || [])[0]
@@ -543,12 +552,14 @@ export function decisionRows(data, board, now = new Date()) {
 const DC_TONE = { ok: ['✓', '#00ff88'], pos: ['▲', '#00ff88'], neg: ['▼', '#ff4466'], warn: ['⚠', '#ffb800'], info: ['•', '#94a3b8'], na: ['·', '#475569'] }
 function DecisionCheck({ data }) {
   const [board, setBoard] = useState(null)
+  const [news, setNews] = useState(null)
   useEffect(() => {
     let alive = true
     rdBoardOnce().then(b => alive && setBoard(b || { signals: [] })).catch(() => alive && setBoard({ error: true }))
+    fetchNews().then(n => alive && setNews(n)).catch(() => {})
     return () => { alive = false }
   }, [])
-  const { rows, summary } = decisionRows(data, board)
+  const { rows, summary } = decisionRows(data, board, new Date(), news)
   const sc = DC_TONE[summary.tone] || DC_TONE.na
   return (
     <div className="panel p-5 font-display" data-testid="decision-check">
@@ -840,8 +851,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                 const planBuys = allBuys.filter(t => t.isPlanBuy === true)
                 const buys     = allBuys.filter(t => t.isPlanBuy !== true)   // genuine, discretionary buys only
                 const sells    = insiders.filter(t => t.transactionCode === 'S')
-                const netSentiment = buys.length > sells.length ? 'Bullish' : buys.length < sells.length ? 'Bearish' : 'Neutral'
-                const sentColor = buys.length > sells.length ? '#00ff88' : buys.length < sells.length ? '#ff4466' : '#64748b'
                 return (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between flex-wrap gap-y-1">
@@ -853,11 +862,10 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
                         )}
                         <span className="font-mono text-[11px] text-slate-600">last 12 months</span>
                       </div>
-                      <span style={{color:sentColor}} className="font-mono text-[11px] font-semibold">{netSentiment}</span>
                     </div>
                     {planBuys.length > 0 && (
                       <div className="font-mono text-[9px] text-slate-600 leading-snug">
-                        {planBuys.length} of the buys below are payroll-plan purchases (several insiders, same day, same price) — excluded from the verdict above.
+                        {planBuys.length} of the buys below are payroll-plan purchases (several insiders, same day, same price) — not counted as buys above.
                       </div>
                     )}
                     {(() => {
