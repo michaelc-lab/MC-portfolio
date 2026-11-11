@@ -39,3 +39,24 @@ export function jsonpOnce(url, timeoutMs = 30000) {
 export async function jsonp(url, { timeout = 30000, retryTimeout = 45000 } = {}) {
   try { return await jsonpOnce(url, timeout) } catch (e) { return await jsonpOnce(url, retryTimeout) }
 }
+
+// ── Important S&P 500 news ────────────────────────────────────
+// Built every 30 minutes on GitHub from several sources and kept by the MC News worker (public S&P 500 news only —
+// nothing about your holdings travels there; the "My stocks" filter happens here in your browser).
+export const NEWS_URL = 'https://mc-news.mikycohen1.workers.dev/news'
+let NEWS_P = null, NEWS_AT = 0
+export function fetchNews(force = false) {
+  if (!force && NEWS_P && Date.now() - NEWS_AT < 5 * 60e3) return NEWS_P
+  NEWS_AT = Date.now()
+  NEWS_P = fetch(NEWS_URL, { cache: 'no-store' })
+    .then(r => { if (!r.ok) throw new Error('News unavailable (HTTP ' + r.status + ')'); return r.json() })
+    .catch(e => { NEWS_P = null; throw e })
+  return NEWS_P
+}
+// "Nvidia shares fall - Reuters" → "Nvidia shares fall" (the source is shown separately)
+export const stripSource = (headline, source) => {
+  let h = String(headline || '').trim()
+  if (source) h = h.replace(new RegExp('\\s*[-–—|]\\s*' + source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'i'), '')
+  return h
+}
+export function resetNewsCache() { NEWS_P = null; NEWS_AT = 0 }   // tests; and the dashboard's manual refresh
