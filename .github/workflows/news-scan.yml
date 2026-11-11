@@ -116,7 +116,7 @@ jobs:
               r"said on (its|the) .{0,20}call|to host|conference call|webcast|(to|will) (report|announce|release|post) .{0,40}(results|earnings)|earnings date|draws focus|"
               r"investor alert|shareholder alert|lead plaintiff|investors who (lost|bought|purchased)|(rosen|pomerantz|bronstein|levi & korsinsky|faruqi|bragar|kessler topaz|"
               r"glancy|robbins geller|gainey|schall|portnoy|kahn swick|bernstein liebhard|johnson fistel|holzer)|lawsuit probes|net[- ]leased?|"
-              r"ytd|year[- ]to[- ]date|from (its |the )?(\w+ )?(peak|high|low)|since (its )?(ipo|peak|high|low)|52[- ]week|all[- ]time high)\b", re.I)
+              r"ytd|year[- ]to[- ]date|in a (week|month|year)|this (week|month|year)|(past|last) (week|month|year|\d+ (days|weeks|months))|over (a|the) (week|month|year)|from (its |the )?(\w+ )?(peak|high|low)|since (its )?(ipo|peak|high|low)|52[- ]week|all[- ]time high)\b", re.I)
           QUESTION_RE = re.compile(r"^\s*(should|will|is|are|can|could|does|do|did|what|why|how|which|who|has|have)\b", re.I)
           JUNK_SOURCES = re.compile(r"marketbeat|etf daily news|defense world|the lincolnian|tickerreport|american banking news|zolmax|"
                                     r"modern readers|the enterprise leader|thecerbatgems|motley fool|fool\.com|zacks|stock titan|simply wall|"
@@ -295,7 +295,7 @@ jobs:
                       if subj:
                           pos = subj
                   # "Moody's cuts US rating", "Goldman says…": a bank or agency alone in a rating story is the source, not the subject
-                  if etype == "rating" and pos and all(t in COMMENTATORS for t in pos):
+                  if etype in ("rating", "guidance", "move") and pos and all(t in COMMENTATORS for t in pos):
                       return []
                   if not pos:
                       return []
@@ -445,12 +445,29 @@ jobs:
                   except ValueError:
                       continue
                   if t in want and abs(pct) >= min_pct:
-                      moves[t] = round(pct, 1)
+                      moves[t] = {"pct": round(pct, 1), "time": NOW, "when": "today"}
               return 200, moves, len(rows)
 
 
+          def move_when(ts):
+              """A trade time → (event time, wording). Before today's US open the latest prices are YESTERDAY's close:
+              such a move is dated that day ("on Nov 10"), never called "today"."""
+              from zoneinfo import ZoneInfo
+              ny = ZoneInfo("America/New_York")
+              now_ny = NOW.astimezone(ny)
+              t = parse_time(ts) if ts else None
+              if t is None:
+                  return NOW, "today"
+              t_ny = t.astimezone(ny)
+              session_open = now_ny.replace(hour=9, minute=30, second=0, microsecond=0)
+              if t_ny.date() == now_ny.date() and now_ny >= session_open and t_ny >= session_open:
+                  return NOW, "today"
+              close = t_ny.replace(hour=16, minute=0, second=0, microsecond=0)
+              return close.astimezone(timezone.utc), "on " + t_ny.strftime("%b ") + str(t_ny.day)
+
+
           def tiingo_moves(key, tickers, min_pct=7.0):
-              """Big price moves today for S&P 500 stocks (one bulk request). Returns status, {ticker: pct}."""
+              """Big price moves for S&P 500 stocks (one bulk request): {ticker: {pct, time, when}}."""
               st, body = fetch("https://api.tiingo.com/iex/?token=" + urllib.parse.quote(key), ua=SEC_UA, timeout=60)
               if st != 200:
                   return st, {}
@@ -461,7 +478,8 @@ jobs:
                   if t in want and last and prev:
                       pct = (last / prev - 1) * 100
                       if abs(pct) >= min_pct:
-                          moves[t] = round(pct, 1)
+                          tm, when = move_when(q.get("lastSaleTimestamp") or q.get("timestamp"))
+                          moves[t] = {"pct": round(pct, 1), "time": tm, "when": when}
               return 200, moves
 
 
@@ -557,13 +575,28 @@ jobs:
                   sec = {"form": f["form"], "items": [SEC_ITEMS[i][1] for i in f["items"] if i in SEC_ITEMS], "url": f["url"], "date": (f["time"] or NOW).date().isoformat()}
                   add(t, etype, {"title": matcher.by_ticker[t]["name"] + ": " + words, "url": f["url"], "source": "SEC filing", "time": f["time"]}, official=True, sec=sec)
 
-              for t, pct in moves.items():
-                  if t in matcher.by_ticker:
-                      add(t, "move", {"title": "%s shares %s %.1f%% today" % (matcher.by_ticker[t]["name"], "up" if pct > 0 else "down", abs(pct)),
-                                      "url": "", "source": "Price data", "time": NOW})
+              price_only = {}
+              for t, mv in moves.items():
+                  if t not in matcher.by_ticker:
+                      continue
+                  mv = mv if isinstance(mv, dict) else {"pct": mv, "time": NOW, "when": "today"}
+                  mine = [e for e in events.values() if e["ticker"] == t and e["type"] != "move"]
+                  info = {"pct": mv["pct"], "when": mv["when"]}
+                  if mine:                         # the move goes WITH the news that explains it, not as a separate line
+                      for e in mine:
+                          e["move"] = info
+                      continue
+                  price_only[t] = (mv, info)
+              for t, (mv, info) in price_only.items():
+                  add(t, "move", {"title": "%s shares %s %.1f%% %s" % (clean_name(matcher.by_ticker[t]["name"]), "up" if mv["pct"] > 0 else "down", abs(mv["pct"]), mv["when"]),
+                                  "url": "", "source": "Price data", "time": mv["time"]})
+                  events[(t, "move")]["move"] = info
+                  events[(t, "move")]["priceOnly"] = True
 
               # keep events from earlier runs that are still inside the window (a story can drop out of a feed)
               for ev in prev_events or []:
+                  if ev.get("type") == "move" and (ev.get("priceOnly") or any(r.get("source") == "Price data" for r in ev.get("reports", []))):
+                      continue                     # price-only lines are rebuilt from fresh prices every run, never carried over
                   key = (ev["ticker"], ev["type"])
                   try:
                       if datetime.fromisoformat(ev["time"]) < cutoff:
