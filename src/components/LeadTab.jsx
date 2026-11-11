@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { APPS_SCRIPT_URL, jsonp, safeUrl } from '../lib/api'
-import { oddsLabel } from '../lib/odds'
-import { TrendingUp, TrendingDown, Zap, AlertTriangle, Calendar, Sparkles } from 'lucide-react'
+import { TrendingUp, TrendingDown, Zap, AlertTriangle, Calendar } from 'lucide-react'
 import { fmtPrice, fmtPct } from '../lib/utils'
 
 
@@ -325,18 +324,13 @@ function SectorPulse({ portfolio, isMobile }) {
 }
 
 // ── Main export ───────────────────────────────────────────────
-// ── News Radar — a briefing, not a log. Separate from the MC Score. ──
+// ── News helpers ──
 const rdAge = iso => {
   if (!iso) return ''
   const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
   return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd'
 }
 const rdAgoLong = iso => { const a = rdAge(iso); return a ? a.replace(/m$/, ' min').replace(/h$/, 'h').replace(/d$/, 'd') + ' ago' : '' }
-const RD_SUFFIX_RE = /\b(inc|corp|corporation|co|company|ltd|limited|plc|holdings?|group|class [a-z]|adr|sa|nv|ag|se)\b\.?/gi
-const rdShortName = (name, ticker, names) => {
-  const n = (names && names[ticker]) || name || ''
-  return n.replace(RD_SUFFIX_RE, '').replace(/[,.]+\s*$/, '').replace(/\s{2,}/g, ' ').trim().split(' ').slice(0, 3).join(' ') || ticker
-}
 const rdClean = (h, ticker) => {
   let s = String(h || '')
     .replace(/\((?:NASDAQ|NYSE|NYSE American|AMEX|OTC|Nasdaq)\s*:\s*[A-Z.]+\)/g, '')
@@ -346,97 +340,33 @@ const rdClean = (h, ticker) => {
   if (s.length > 92) s = s.slice(0, 89).replace(/\s+\S*$/, '') + '…'
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
-const rdLine = (s) => s.summary || rdClean(s.headline, s.ticker)
-const rdDots = strength => { const n = strength === 'High' ? 3 : strength === 'Medium' ? 2 : 1; return [0, 1, 2].map(i => i < n) }
-const rdStatus = s => {
-  if (s.against) return { text: 'Moving against it', tone: 'text-terminal-red' }
-  if (s.late) return { text: s.statedMove >= 10 ? `Already ${s.dir > 0 ? 'up' : 'down'} ${s.statedMove}%` : 'Already moved', tone: 'text-terminal-amber' }
-  if (s.confirmed && s.dp != null) return { text: `${s.dp > 0 ? '+' : ''}${Number(s.dp).toFixed(1)}% today`, tone: s.dp >= 0 ? 'text-terminal-green' : 'text-terminal-red' }
-  return { text: 'Not moving yet', tone: 'text-slate-500' }
-}
-const rdLinkPlain = s => s.link === 'named' ? 'The company is named in the news'
-  : s.link === 'ai' ? (s.aiOnly ? 'Inferred by AI — not yet confirmed by the market or company news' : 'Inferred by AI and confirmed')
-  : s.link === 'name' ? 'Matched by company name' : 'Industry theme: ' + (s.via || '')
 
-const RD_VOTE_KEY = 'mc_radar_votes'
-const rdVotes = () => { try { return JSON.parse(localStorage.getItem(RD_VOTE_KEY) || '{}') } catch (e) { return {} } }
-function RadarRating({ s }) {
-  const key = s.ticker + '|' + (s.time || '')
-  const [vote, setVote] = useState(() => rdVotes()[key] || null)
-  const [err, setErr] = useState(null)
-  const send = v => {
-    const next = vote === v ? null : v
-    setVote(next); setErr(null)
-    try { const all = rdVotes(); if (next) all[key] = next; else delete all[key]; localStorage.setItem(RD_VOTE_KEY, JSON.stringify(all)) } catch (e) {}
-    jsonp(`${APPS_SCRIPT_URL}?action=rateRadar&ticker=${encodeURIComponent(s.ticker)}&time=${encodeURIComponent(s.time || '')}&vote=${next || 'clear'}`)
-      .then(r => { if (r && r.error) setErr(r.error) }).catch(e => setErr('Not saved — ' + e.message))
-  }
-  const btn = (v, label) => (
-    <button key={v} onClick={() => send(v)} aria-pressed={vote === v}
-      className={`text-[12px] px-2.5 py-1 rounded-md border transition-colors ${vote === v ? 'border-electric-400/60 bg-electric-500/15 text-slate-100' : 'border-white/10 text-slate-400 hover:text-slate-200 hover:border-white/20'}`}>{label}</button>
-  )
-  return (
-    <div className="mt-3 flex items-center gap-2 flex-wrap">
-      <span className="text-[11px] text-slate-500">Was this signal right?</span>
-      {btn('right', '👍 Right')}{btn('wrong', '👎 Wrong')}{btn('irrelevant', 'Not relevant')}
-      {vote && !err && <span className="text-[11px] text-slate-600">Saved — it counts toward the Radar's accuracy</span>}
-      {err && <span className="text-[11px] text-terminal-red">{err}</span>}
-    </div>
-  )
-}
+const rdLinkPlain = s => s.link === 'named' ? 'The company is named in the story'
+  : s.link === 'ai' ? 'Linked to the company by AI — not named in the story itself'
+  : s.link === 'name' ? 'Matched by company name' : 'Industry story: ' + (s.via || '')
 
-function RadarDetails({ s, onAnalyze, onClose }) {
+function NewsDetails({ s, onAnalyze }) {
   return (
-    <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-4 font-display">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <a href={safeUrl(s.url) || undefined} target="_blank" rel="noopener noreferrer" className="text-[13px] text-slate-200 hover:text-white leading-snug">{s.headline}</a>
-          <div className="text-[11px] text-slate-500 mt-1">{s.source}{s.time ? ' · ' + rdAgoLong(s.time) : ''}{s.sources > 1 ? ` · reported by ${s.sources} sources` : ''}</div>
-        </div>
-        <button onClick={onClose} aria-label="Close details" className="text-slate-500 hover:text-slate-300 text-[13px] flex-shrink-0">✕</button>
-      </div>
+    <div className="mt-1 mb-3 rounded-lg border border-white/10 bg-white/[0.02] p-4 font-display">
+      <a href={safeUrl(s.url) || undefined} target="_blank" rel="noopener noreferrer" className="text-[13px] text-slate-200 hover:text-white leading-snug">{s.headline} ↗</a>
+      <div className="text-[11px] text-slate-500 mt-1">{s.source}{s.time ? ' · ' + rdAgoLong(s.time) : ''}{s.sources > 1 ? ` · reported by ${s.sources} sources` : ''}</div>
       <div className="mt-3 space-y-1.5 text-[12px] text-slate-400">
         <div>{rdLinkPlain(s)}</div>
-        {s.sec && <div className="text-slate-400">The company also filed {/^8/.test(s.sec.form) ? 'an' : 'a'} <a href={safeUrl(s.sec.url) || undefined} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.sec.form} on {s.sec.date}</a> — open it to see if it's related</div>}
-        {s.aiOnly
-          ? <div className="text-terminal-amber/90">AI reasoning: {s.aiReason || s.evidence}</div>
-          : s.evidence ? <div className="text-terminal-green/80">Evidence: {safeUrl(s.evidenceUrl) ? <a href={safeUrl(s.evidenceUrl)} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a> : s.evidence}</div> : null}
-        {s.volRatio != null && s.volRatio >= 2 && <div>Trading at {s.volRatio}× its normal volume</div>}
+        {s.sec && <div>The company also filed {/^8/.test(s.sec.form) ? 'an' : 'a'} <a href={safeUrl(s.sec.url) || undefined} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.sec.form} on {s.sec.date}</a> — open it to see if it's related</div>}
+        {s.evidence && !s.aiOnly && <div>Source quote: {safeUrl(s.evidenceUrl) ? <a href={safeUrl(s.evidenceUrl)} target="_blank" rel="noopener noreferrer" className="hover:underline">{s.evidence}</a> : s.evidence}</div>}
         {s.role === 'target' && <div>This company is the target of a proposed acquisition</div>}
-        {s.smallCap && <div>Small company — news can move it sharply in both directions</div>}
       </div>
-      <RadarRating s={s} />
       <button onClick={() => onAnalyze && onAnalyze(s.ticker)} className="mt-3 text-[12px] text-electric-400 hover:text-electric-300">Open full analysis →</button>
     </div>
   )
 }
 
-function RadarCard({ s, open, onToggle, onAnalyze, names }) {
-  const bull = s.dir > 0, st = rdStatus(s)
-  return (
-    <button onClick={onToggle} aria-expanded={open}
-      className={`text-left rounded-xl border p-4 transition-colors font-display ${open ? 'border-electric-500/40 bg-electric-500/[0.04]' : 'border-white/10 hover:border-white/20 bg-white/[0.015]'}`}>
-      <div className="flex items-center justify-between">
-        <span onClick={e => { e.stopPropagation(); onAnalyze && onAnalyze(s.ticker) }} className="font-mono text-[18px] text-slate-100 hover:text-electric-300">{s.ticker}</span>
-        <span className={`text-[11px] px-2.5 py-0.5 rounded-md ${bull ? 'bg-terminal-green/10 text-terminal-green' : 'bg-terminal-red/10 text-terminal-red'}`}>{bull ? 'Bullish' : 'Bearish'}</span>
-      </div>
-      <div className="text-[11px] text-slate-500 mt-0.5">{rdShortName(s.name, s.ticker, names)}</div>
-      <div className="text-[13px] text-slate-300 leading-snug mt-3 min-h-[36px]">{rdLine(s)}</div>
-      <div className="flex items-center justify-between mt-4 text-[11px]">
-        <span className="flex gap-1" aria-label={`Confidence ${s.strength}`}>{rdDots(s.strength).map((on, i) => <span key={i} className={`w-1.5 h-1.5 rounded-full ${on ? 'bg-slate-200' : 'bg-slate-700'}`} />)}</span>
-        <span className={st.tone}>{st.text}<span className="text-slate-600"> · {rdAge(s.time)}</span></span>
-      </div>
-    </button>
-  )
-}
-
-function NewsRadar({ onAnalyze, isMobile, names }) {
+// ── News on your stocks — a plain feed: what was reported, where, when. No buy/sell calls (they didn't beat chance). ──
+export function NewsFeed({ onAnalyze, isMobile, names }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
   const [openKey, setOpenKey] = useState(null)
   const [showAll, setShowAll] = useState(false)
-  const [showTrack, setShowTrack] = useState(false)
-  const [track, setTrack] = useState(null)
   const fetched = useRef(false)
 
   useEffect(() => {
@@ -444,232 +374,47 @@ function NewsRadar({ onAnalyze, isMobile, names }) {
     fetched.current = true
     jsonp(`${APPS_SCRIPT_URL}?action=getNewsRadar`).then(d => setData(d)).catch(e => setErr(e.message))
   }, [])
-  const toggleTrack = () => {
-    const next = !showTrack
-    setShowTrack(next)
-    if (next && !track) jsonp(`${APPS_SCRIPT_URL}?action=getNewsRadarTrack`).then(t => setTrack(t)).catch(e => setTrack({ error: e.message }))
-  }
 
   const meta = data && data.meta
-  const sigs = ((data && data.signals) || []).filter(s => s.dir !== 0)
-  const ageH = s => s.time ? (Date.now() - new Date(s.time).getTime()) / 3600000 : 99
-  const score = s => (s.aiOnly ? 0 : 5) + (s.late ? 0 : 10) + (s.points || 0) - Math.min(ageH(s), 72) / 24
-  const top = sigs.filter(s => !s.against && (s.strength === 'High' || s.strength === 'Medium')).sort((a, b) => score(b) - score(a)).slice(0, 3)
-  const rest = sigs.filter(s => top.indexOf(s) < 0).sort((a, b) => score(b) - score(a))
-  const restShown = showAll ? rest : rest.slice(0, 5)
-  const openTop = top.find(s => s.ticker === openKey)
-  const ai = meta && meta.ai
-  const aiOn = ai && ai.used && !ai.error
+  const t = s => s.time ? new Date(s.time).getTime() : 0
+  const items = ((data && data.signals) || []).slice().sort((a, b) => t(b) - t(a))   // newest first
+  const shown = showAll ? items : items.slice(0, 10)
+  const key = s => s.ticker + '|' + (s.time || '')
 
   return (
-    <div className="panel p-5 font-display">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-5">
-        <div className="flex items-baseline gap-3 flex-wrap">
-          <span className="text-[16px] text-slate-100">News radar</span>
-          {meta && <span className="text-[12px] text-slate-500">Updated {rdAgoLong(meta.lastRun)} · {meta.headlines} headlines read</span>}
-          {meta && <span title={ai && ai.error ? ai.error : aiOn ? 'AI reading news: ' + ai.model : 'Rules only'} className={`inline-block w-1.5 h-1.5 rounded-full ${aiOn ? 'bg-electric-400' : 'bg-slate-600'}`} />}
-        </div>
-        <button onClick={toggleTrack} className="text-[12px] text-slate-400 hover:text-slate-200 border border-white/10 hover:border-white/20 rounded-md px-3 py-1">{showTrack ? 'Hide track record' : 'Track record'}</button>
+    <div className="panel p-5 font-display" data-testid="news-feed">
+      <div className="flex items-baseline gap-3 flex-wrap mb-4">
+        <span className="text-[16px] text-slate-100">News on your stocks</span>
+        {meta && <span className="text-[12px] text-slate-500">Updated {rdAgoLong(meta.lastRun)} · last 2 days</span>}
       </div>
-
-      {showTrack && (
-        <div className="mb-5 rounded-lg border border-white/10 p-4">
-          {!track && <div className="text-[12px] text-slate-500 animate-pulse">Checking what flagged stocks did next…</div>}
-          {track && track.error && <div className="text-[12px] text-terminal-red">{track.error}</div>}
-          {track && !track.error && track.computing && <div className="text-[12px] text-slate-500">Preparing your track record — it's calculated in the background after each scan. Check back in a few minutes.</div>}
-          {track && !track.error && !track.computing && track.matured === 0 && <div className="text-[12px] text-slate-500">Collecting results — {track.total} signal{track.total === 1 ? '' : 's'} logged so far. Results appear once signals are a day old.</div>}
-          {track && !track.error && !track.computing && track.matured > 0 && (
-            <div className="space-y-1.5 text-[12px]">
-              {track.buckets.concat(track.sectors && track.sectors.n ? [{ strength: 'Sector pulse', ...track.sectors }] : [], track.ai && track.ai.n ? [{ strength: 'AI-inferred', ...track.ai }] : []).filter(b => b.n).map(b => (
-                <div key={b.strength} className="flex justify-between gap-3 flex-wrap text-slate-400">
-                  <span>{b.strength === 'High' ? 'Strong signals' : b.strength === 'Medium' ? 'Moderate signals' : b.strength === 'Low' ? 'Weak signals' : b.strength}</span>
-                  {/* a hit rate from a handful of signals is noise — show the count only until there are 10 */}
-                  {b.n < 10 ? <span className="text-slate-500">{b.n} signal{b.n === 1 ? '' : 's'} so far — too few to judge (needs 10)</span> : <span><span className="text-slate-200">{b.hitRate == null ? '—' : b.hitRate.toFixed(0) + '%'}</span> moved as expected
-                    {b.beatMarketRate != null && <> · <span className="text-slate-200">{b.beatMarketRate.toFixed(0)}%</span> beat the market</>}
-                    <span className="text-slate-600"> · {b.n} signals · avg {b.avgMove == null ? '—' : (b.avgMove >= 0 ? '+' : '') + b.avgMove.toFixed(1) + '%'}</span></span>}
-                </div>
-              ))}
-              {track.baseline && track.baseline.n > 0 && (
-                <div className="pt-2 text-[11px] text-slate-500 leading-relaxed">
-                  For comparison: the S&amp;P 500 itself moved the predicted way {track.baseline.marketSameWay.toFixed(0)}% of the time, and a coin flip is right 50%.
-                  {' '}A signal only adds value if it clearly beats both.
-                </div>
-              )}
-            </div>
-          )}
-          {track && !track.error && track.feedback && track.feedback.all.n > 0 && (
-            <div className="mt-3 pt-3 border-t border-white/5 text-[12px] text-slate-400">
-              Your ratings: <span className="text-slate-200">{track.feedback.all.n}</span> rated
-              {track.feedback.all.n < 10 ? <span className="text-slate-500"> — accuracy shown from 10 ratings</span> : <>
-              {track.feedback.all.accuracy != null && <> · <span className="text-slate-200">{track.feedback.all.accuracy.toFixed(0)}%</span> right</>}
-              {track.feedback.named.accuracy != null && track.feedback.named.n >= 10 && <span className="text-slate-600"> · named in news {track.feedback.named.accuracy.toFixed(0)}%</span>}
-              {track.feedback.ai.accuracy != null && track.feedback.ai.n >= 10 && <span className="text-slate-600"> · AI-inferred {track.feedback.ai.accuracy.toFixed(0)}%</span>}</>}
-            </div>
-          )}
-        </div>
-      )}
 
       {!data && !err && <div className="py-8 text-center text-[12px] text-slate-500 animate-pulse">Reading the news…</div>}
       {err && <div className="py-8 text-center text-[12px] text-terminal-red">{err}</div>}
       {data && !meta && <div className="py-8 text-center text-[12px] text-slate-500">Not started yet — run installNewsRadarTrigger once in Apps Script.</div>}
-      {data && meta && !sigs.length && (meta.headlines === 0
+      {data && meta && !items.length && (meta.headlines === 0
         ? <div className="py-8 text-center text-[13px] text-terminal-amber">No headlines received — the news feeds may be down. This is not a quiet day.</div>
-        : <div className="py-8 text-center text-[13px] text-slate-500">A quiet news day — nothing worth your attention right now.</div>)}
+        : <div className="py-8 text-center text-[13px] text-slate-500">No news on your stocks in the last 2 days.</div>)}
 
-      {top.length > 0 && (
-        <>
-          <div className="text-[12px] text-slate-500 mb-2">Top signals</div>
-          <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
-            {top.map(s => <RadarCard key={s.ticker} s={s} names={names} open={openKey === s.ticker} onAnalyze={onAnalyze} onToggle={() => setOpenKey(openKey === s.ticker ? null : s.ticker)} />)}
-          </div>
-          {openTop && <RadarDetails s={openTop} onAnalyze={onAnalyze} onClose={() => setOpenKey(null)} />}
-        </>
-      )}
-
-      {meta && meta.sectors && meta.sectors.length > 0 && (
-        <div className="mt-6">
-          <div className="text-[12px] text-slate-500 mb-2">Sector pulse</div>
-          <div className="flex flex-wrap gap-2">
-            {meta.sectors.map(x => {
-              const mixed = x.against && !x.moving
-              const status = x.moving ? 'stocks following' : x.against ? (x.dir > 0 ? 'rally fading' : 'stocks shrugging it off') : 'not in prices yet'
-              return (
-                <span key={x.theme + x.dir} title={x.headline + (x.source ? ' — ' + x.source : '') + '\nWatch: ' + x.tickers.map(t => t.ticker).join(', ')}
-                  className="text-[13px] px-3 py-1.5 rounded-md border border-white/10 text-slate-200">
-                  <span className={mixed ? 'text-slate-500' : x.dir > 0 ? 'text-terminal-green' : 'text-terminal-red'}>{mixed ? '◆' : x.dir > 0 ? '▲' : '▼'}</span>{' '}
-                  {x.theme.split(' / ')[0]}<span className="text-slate-500"> · {status}</span>
-                </span>
-              )
-            })}
-          </div>
+      {items.length > 0 && (
+        <div className="border-t border-white/5">
+          {shown.map(s => {
+            const k = key(s), open = openKey === k
+            return (
+              <div key={k} className="border-b border-white/5">
+                <button onClick={() => setOpenKey(open ? null : k)} aria-expanded={open} className="w-full flex items-center gap-3 py-2.5 text-left hover:bg-white/[0.02]">
+                  <span className="font-mono text-[13px] text-slate-200 w-14 flex-shrink-0">{s.ticker}</span>
+                  <span className={`text-[13px] text-slate-300 flex-1 min-w-0 ${isMobile ? '' : 'truncate'}`}>{rdClean(s.headline, s.ticker)}</span>
+                  {!isMobile && <span className="text-[11px] text-slate-600 flex-shrink-0 max-w-[140px] truncate">{s.source}</span>}
+                  <span className="text-[11px] text-slate-600 w-8 text-right flex-shrink-0">{rdAge(s.time)}</span>
+                </button>
+                {open && <NewsDetails s={s} onAnalyze={onAnalyze} />}
+              </div>
+            )
+          })}
         </div>
       )}
-
-      {rest.length > 0 && (
-        <div className="mt-6">
-          <div className="text-[12px] text-slate-500 mb-1">Also on the radar</div>
-          <div className="border-t border-white/5">
-            {restShown.map(s => {
-              const open = openKey === s.ticker, st = rdStatus(s)
-              return (
-                <div key={s.ticker} className="border-b border-white/5">
-                  <button onClick={() => setOpenKey(open ? null : s.ticker)} aria-expanded={open} className="w-full flex items-center gap-3 py-2.5 text-left hover:bg-white/[0.02]">
-                    <span className={`w-3 text-[12px] ${s.dir > 0 ? 'text-terminal-green' : 'text-terminal-red'}`}>{s.dir > 0 ? '▲' : '▼'}</span>
-                    <span className="font-mono text-[13px] text-slate-200 w-14 flex-shrink-0">{s.ticker}</span>
-                    <span className={`text-[13px] text-slate-400 flex-1 min-w-0 ${isMobile ? '' : 'truncate'}`}>{rdLine(s)}</span>
-                    {(s.against || s.late) && !isMobile && <span className={`text-[11px] ${st.tone} flex-shrink-0`}>{st.text}</span>}
-                    <span className="text-[11px] text-slate-600 w-8 text-right flex-shrink-0">{rdAge(s.time)}</span>
-                  </button>
-                  {open && <div className="pb-3"><RadarDetails s={s} onAnalyze={onAnalyze} onClose={() => setOpenKey(null)} /></div>}
-                </div>
-              )
-            })}
-          </div>
-          {rest.length > 5 && (
-            <button onClick={() => setShowAll(v => !v)} className="mt-2 text-[12px] text-slate-500 hover:text-slate-300">{showAll ? 'Show less' : `Show ${rest.length - 5} more`}</button>
-          )}
-        </div>
-      )}
-
-      {meta && sigs.length > 0 && <div className="mt-5 text-[11px] text-slate-600">Speculative — news-driven moves often reverse. Tap any signal for its evidence.</div>}
-    </div>
-  )
-}
-
-// ── MC Score Leaders — whole universe, rescored automatically every day ──
-const lbColor = s => s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
-const LB_REGIME = { 'risk-off': ['#ff4466', 'Risk-off'], 'neutral': ['#ffb800', 'Neutral'], 'risk-on': ['#00ff88', 'Risk-on'] }
-
-function LeaderRow({ r, i, onAnalyze, isMobile, weak }) {
-  const c = lbColor(r.score)
-  return (
-    <button onClick={() => onAnalyze && onAnalyze(r.ticker)}
-      className="w-full flex items-center gap-3 px-4 py-2 border-b border-white/5 last:border-0 hover:bg-electric-500/[0.04] transition-colors text-left">
-      <span className="font-mono text-[10px] text-slate-600 w-4 text-right flex-shrink-0">{i + 1}</span>
-      <span className="font-mono font-bold text-[13px] text-electric-300 w-16 flex-shrink-0">{r.ticker}</span>
-      {!isMobile && <span className={`font-mono text-[11px] truncate flex-1 min-w-0 ${weak && r.risk ? 'text-terminal-red/80' : 'text-slate-500'}`}>{(weak ? r.risk : r.signal) || r.name}</span>}
-      <span className="flex items-center gap-2 flex-shrink-0 ml-auto">
-        {!isMobile && r.low !== '' && r.high !== '' && <span className="font-mono text-[9px] text-slate-600">{Number(r.low).toFixed(1)}–{Number(r.high).toFixed(1)}</span>}
-        <span style={{ color: c, borderColor: c + '55', background: c + '14' }} className="font-mono text-[12px] font-bold px-2 py-0.5 rounded border w-12 text-center">{Number(r.score).toFixed(1)}</span>
-        <span style={{ color: c }} className="font-mono text-[10px] w-[96px] text-right">{oddsLabel(r.label)}</span>
-      </span>
-    </button>
-  )
-}
-
-function ScoreLeaders({ onAnalyze, isMobile }) {
-  const [data, setData] = useState(null)
-  const [err, setErr] = useState(null)
-  const fetched = useRef(false)
-
-  useEffect(() => {
-    if (fetched.current) return
-    fetched.current = true
-    jsonp(`${APPS_SCRIPT_URL}?action=getScoreLeaders`)
-      .then(d => { if (!d || d.error || !Array.isArray(d.top)) setErr('Scores unavailable right now'); else setData(d) })
-      .catch(e => setErr(e.message))
-  }, [])
-  const [showMkt, setShowMkt] = useState(false)
-  // the wider-market list never repeats your own stocks — filtered here too, so it holds even if the backend is older
-  const mine = new Set(((data && data.all) || []).map(r => String(r.ticker).toUpperCase()))
-  const mkt = data && data.market ? { ...data.market, top: (data.market.top || []).filter(r => !r.yours && !mine.has(String(r.ticker).toUpperCase())) } : null
-
-  const reg = data && data.regime ? (LB_REGIME[data.regime.regime] || LB_REGIME.neutral) : null
-  const updated = data && data.updated ? new Date(data.updated).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : null
-
-  return (
-    <div className="panel overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <Sparkles size={14} className="text-electric-400" />
-          <span className="font-display font-semibold text-[13px] text-slate-200">MC Score Leaders</span>
-          {reg && <span style={{ color: reg[0], borderColor: reg[0] + '55', background: reg[0] + '14' }} className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border">{reg[1]}</span>}
-        </div>
-        <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600">
-          {data ? `${data.scored}/${data.universe} scored${updated ? ' · ' + updated : ''}` : 'Your universe · daily'}
-        </span>
-      </div>
-      {!data && !err && <div className="p-6 text-center font-mono text-[11px] text-slate-600 uppercase tracking-wider animate-pulse">Loading scores…</div>}
-      {err && <div className="p-6 text-center font-mono text-[11px] text-terminal-red">{err}</div>}
-      {data && data.scored === 0 && (
-        <div className="p-6 text-center font-mono text-[11px] text-slate-500 leading-relaxed">
-          No scores yet. Once the background scorer is installed, your whole universe is scored automatically —
-          or analyze any stock in Workstation to add it now.
-        </div>
-      )}
-      {data && data.scored > 0 && (
-        <div className={`grid ${isMobile || !data.bottom.length ? 'grid-cols-1' : 'grid-cols-2'} divide-white/5 ${isMobile ? '' : 'divide-x'}`}>
-          <div>
-            <div className="px-4 pt-2 pb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-terminal-green">▲ Highest scores</div>
-            {data.top.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} />)}
-          </div>
-          {data.bottom.length > 0 && (
-            <div>
-              <div className="px-4 pt-2 pb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-terminal-red">▼ Weakest — review these</div>
-              {data.bottom.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} weak />)}
-            </div>
-          )}
-        </div>
-      )}
-      {mkt && (
-        <div className="border-t border-white/5" data-testid="market-leaders">
-          <button onClick={() => setShowMkt(v => !v)} className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-white/[0.02]">
-            <span className="font-display text-[12px] text-slate-300">
-              Wider market <span className="text-slate-600">· {mkt.name} · not on your lists</span>
-            </span>
-            <span className="font-display text-[11px] text-slate-500 flex-shrink-0">
-              {mkt.scored < 50
-                ? `Scoring in the background — ${mkt.scored} of ${mkt.size} so far`
-                : <>{!showMkt && mkt.top.slice(0, 3).map(r => r.ticker).join(' · ')}{!showMkt && ' · '}{showMkt ? 'Hide' : 'Top 10'}</>}
-            </span>
-          </button>
-          {showMkt && mkt.scored >= 50 && (
-            <div>
-              {mkt.top.map((r, i) => <LeaderRow key={r.ticker} r={r} i={i} onAnalyze={onAnalyze} isMobile={isMobile} />)}
-              <div className="px-4 py-2 font-display text-[11px] text-slate-600">{mkt.scored} of {mkt.size} stocks scored in the last 5 days · each rescored about every 3 days</div>
-            </div>
-          )}
-        </div>
+      {items.length > 10 && (
+        <button onClick={() => setShowAll(v => !v)} className="mt-2 text-[12px] text-slate-500 hover:text-slate-300">{showAll ? 'Show less' : `Show ${items.length - 10} more`}</button>
       )}
     </div>
   )
@@ -726,11 +471,8 @@ export default function LeadTab({ portfolio, onAnalyze, isMobile }) {
       </div>
 
 
-      {/* News Radar */}
-      <NewsRadar onAnalyze={onAnalyze} isMobile={isMobile} names={Object.fromEntries((portfolio || []).map(r => [r.ticker, r.company]))} />
-
-      {/* MC Score Leaders */}
-      <ScoreLeaders onAnalyze={onAnalyze} isMobile={isMobile} />
+      {/* News on your stocks */}
+      <NewsFeed onAnalyze={onAnalyze} isMobile={isMobile} names={Object.fromEntries((portfolio || []).map(r => [r.ticker, r.company]))} />
 
       {/* Daily movers */}
       <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>

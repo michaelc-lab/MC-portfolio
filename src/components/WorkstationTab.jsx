@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { APPS_SCRIPT_URL, jsonp, safeUrl } from '../lib/api'
-import { oddsLabel } from '../lib/odds'
 import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Sparkles } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
@@ -398,388 +397,7 @@ function DualChart({ chartA, chartB, tickerA, tickerB }) {
   )
 }
 
-// ── MC Score panel (v2) ───────────────────────────────────────
-const MC_SCORE_TIP = `<b>MC Score (0–10)</b> — computed by a fixed-rule model: 7 factors, 30+ research-backed signals. AI never picks the number.<br/><br/>
-  🟢 8–10 very favorable · 6.5–8 favorable odds<br/>
-  🟡 4.5–6.5 neutral<br/>
-  🔴 3–4.5 unfavorable · 0–3 very unfavorable odds<br/><br/>
-  <b>Evidence so far:</b> a 5-year test on your stocks found high scores beat the S&amp;P 500 more often than average (73% vs 59% of months) but earned less on average — the biggest winners came from low scores. Not fully reliable: price factors only, stocks chosen with hindsight.<br/><br/>
-  <i>Compared with approximate sector medians and adjusted for the market regime.</i>`
-
-const RANGE_TIP = `<b>Likely range</b> — how far the score could move if the data were slightly different.<br/>Narrow = factors agree. Wide = the stock is controversial: strong on some factors, weak on others.<br/><br/><i>Two stocks with the same score but different ranges are very different bets.</i>`
-
-const AGREE_TIP = `<b>Factor agreement</b><br/>🟢 Strong agreement — all factors point the same way (higher conviction)<br/>🟡 Mixed — some disagreement<br/>🔴 Conflicted — e.g. great momentum but terrible value. Size positions smaller.`
-
-const REGIME_TIP = `<b>Market regime</b> — read from the VIX and the S&amp;P 500 vs its 200-day average.<br/><br/>
-  🔴 <b>Risk-off</b> (VIX ≥ 25 or S&amp;P below its 200d): momentum weight cut, quality &amp; low-risk raised. Momentum strategies historically crash in stressed markets (Daniel &amp; Moskowitz, 2016).<br/>
-  🟡 <b>Neutral</b>: research base weights.<br/>
-  🟢 <b>Risk-on</b> (VIX &lt; 16, S&amp;P rising): momentum &amp; growth raised.`
-
-const LEARN_TIP = `<b>Self-learning weights</b><br/>Every stock in your universe is scored daily and logged. After 30 days the model checks which factors actually predicted returns vs the S&amp;P 500 — on YOUR stocks.<br/><br/>
-  Weights move only when a factor's edge is statistically significant (Fama-MacBeth regression, Bonferroni-corrected 95% bar). Tested on 60 simulated markets: it found the real signals and ignored noise.<br/><br/><i>Needs ~3 months of results before it changes anything.</i>`
-
-const IC_TIP = `<b>Information coefficient (IC)</b> — rank correlation between the score and the next 30-day return vs the S&amp;P 500.<br/><br/>0.00 = no skill · 0.05+ = useful · 0.10+ = excellent (top quant funds live around 0.05–0.10)<br/><br/><i>t-stat shows how confident we are it's not luck.</i>`
-
-const FACTOR_TIPS = {
-  momentum: `<b>Momentum &amp; Trend</b><br/>• 12-1 month return (Jegadeesh &amp; Titman, 1993)<br/>• Risk-adjusted momentum (Barroso &amp; Santa-Clara, 2015)<br/>• Strength vs S&amp;P 500<br/>• Nearness to 52-week high (George &amp; Hwang, 2004)<br/>• Trend smoothness — steady gains persist more than jumps (Da, Gurun &amp; Warachka, 2014)<br/>• 50/200-day trend`,
-  value: `<b>Value</b><br/>• Fair value upside (Eulerpool)<br/>• P/E vs sector median and PEG<br/>• Free cash flow yield<br/>• Analyst targets, discounted ~10% for their historical optimism<br/><br/><i>Cheap stocks outperform over long horizons (Fama &amp; French).</i>`,
-  quality: `<b>Quality &amp; Balance Sheet</b><br/>• Margins vs sector (Novy-Marx, 2013)<br/>• ROE / ROIC, margin trend, debt<br/>• Piotroski F-Score — 9 accounting health tests (2000)<br/>• Accruals — are earnings backed by cash? (Sloan, 1996)<br/>• Share dilution vs buybacks (Pontiff &amp; Woodgate, 2008)`,
-  growth: `<b>Growth</b><br/>• 3-year revenue &amp; earnings CAGR<br/>• Latest 12-month revenue &amp; EPS growth<br/>• Acceleration — is growth speeding up or slowing?`,
-  earnings: `<b>Earnings Surprises</b><br/>Stocks drift after surprises for weeks (Bernard &amp; Thomas, 1989).<br/>• Beat rate &amp; average surprise<br/>• Standardized surprise (SUE) — surprise ÷ its usual size<br/>• The effect fades with time since the report`,
-  smart: `<b>Smart Money</b><br/>• Insider open-market <b>purchases</b> — strongest signal, especially several insiders at once (Lakonishok &amp; Lee, 2001)<br/>• Recent buys count more (90-day half-life)<br/>• Insider sales count lightly — often taxes or diversification<br/>• Analyst upgrade/downgrade trend (Womack, 1996)`,
-  risk: `<b>Risk</b><br/>Low-volatility stocks deliver better risk-adjusted returns (Frazzini &amp; Pedersen, 2014).<br/>Volatility, max drawdown, Sharpe ratio, beta.<br/><br/><i>Weight rises automatically in stressed markets.</i>`,
-}
-
-const mcColor = s => s == null ? '#475569' : s >= 6.5 ? '#00ff88' : s >= 4.5 ? '#ffb800' : '#ff4466'
-const FACTOR_NAMES = { momentum: 'Momentum', value: 'Value', quality: 'Quality', growth: 'Growth', earnings: 'Earnings', smart: 'Smart Money', risk: 'Risk' }
-const th = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#475569', borderBottom: '1px solid rgba(14,165,233,0.08)', whiteSpace: 'nowrap' }
-const td = { padding: '6px 8px', fontFamily: 'IBM Plex Mono', fontSize: 11, whiteSpace: 'nowrap' }
-const pctColor = v => v == null ? '#475569' : v >= 0 ? '#00ff88' : '#ff4466'
-
-
-// ── New score (trial) — shown next to the MC Score while both are compared ─────────────────────────────
-const NS_PARTS = [
-  ['momentum', 'Momentum', v => v >= 60 ? 'Rising more steadily than most over the past year' : v >= 40 ? 'Middle of the pack over the past year' : 'Weaker than most over the past year'],
-  ['quality', 'Quality', v => v >= 60 ? 'Profitable, little debt, few new shares' : v >= 40 ? 'About average profitability and debt' : 'Weak profitability, debt or dilution'],
-  ['value', 'Value', v => v >= 60 ? 'Cheap for what it earns' : v >= 40 ? 'Priced about average for what it earns' : 'Expensive for what it earns'],
-  ['lowRisk', 'Low risk', v => v >= 60 ? 'Calmer price than most' : v >= 40 ? 'Average price swings' : 'Jumpier price than most'],
-]
-const nsColor = v => v == null ? '#475569' : v >= 60 ? '#00ff88' : v >= 40 ? '#ffb800' : '#ff4466'
-const NS_CLASS = { Regular: 'Regular company', Financial: 'Financial company', Speculative: 'Speculative company' }
-const NS_SIZE = { large: 'large', mid: 'mid-size', small: 'small' }
-
-export function NewScorePanel({ ns, ticker, isMobile }) {
-  if (!ns) return null
-  const head = (
-    <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-3">
-      New score · trial — compare with the MC Score below
-    </div>
-  )
-  if (ns.error || ns.missing) return (
-    <div className="panel p-5" data-testid="new-score">
-      {head}
-      <div className="text-[13px] text-slate-400">{ns.missing ? ns.why : 'New score unavailable right now — try again later'}</div>
-    </div>
-  )
-  const big = nsColor(ns.score * 10)
-  return (
-    <div className="panel p-5" data-testid="new-score">
-      {head}
-      <div className={`flex ${isMobile ? 'flex-col gap-5' : 'gap-8'}`}>
-        <div style={{ minWidth: isMobile ? 0 : 220 }}>
-          <div className="flex items-baseline gap-2">
-            <span className="font-display" style={{ fontSize: 44, fontWeight: 600, lineHeight: 1, color: big }} data-testid="ns-score">{ns.score.toFixed(1)}</span>
-            <span className="text-slate-500">/ 10</span>
-          </div>
-          <div className="text-[17px] font-semibold mt-2" style={{ color: big }} data-testid="ns-label">{ns.label}</div>
-          <div className="mt-2"><span className="inline-block text-[11px] px-2 py-0.5 rounded border border-white/15 text-slate-300">{NS_CLASS[ns.cls] || ns.cls}</span></div>
-          <div className="font-mono text-[11px] text-slate-500 mt-3 leading-relaxed">
-            Better than {Math.round(ns.score * 10)}% of the<br />S&amp;P 500 + Nasdaq-100
-          </div>
-          <div className="font-mono text-[10px] text-slate-600 mt-3 leading-relaxed">
-            Compared with {ns.peers} {NS_SIZE[ns.size] || ''} {ns.sector ? ns.sector.toLowerCase() : ''} companies<br />
-            Financials: {ns.fy} annual reports (SEC) · built {ns.asOf}
-            {ns.livePrices && <><br />Momentum and risk: from today's prices</>}
-          </div>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-1">The 4 parts — each counts the same</div>
-          {NS_PARTS.map(([k, name, words]) => { const v = ns.pillars ? ns.pillars[k] : null; return (
-            <div key={k} className="flex items-center gap-3 py-1.5 border-b border-white/5 text-[13px]" data-testid={'ns-part-' + k}>
-              <span className="w-20 flex-shrink-0 text-slate-300">{name}</span>
-              <div className="h-1.5 rounded bg-navy-700 overflow-hidden flex-shrink-0" style={{ width: isMobile ? 90 : 180 }}>
-                <div className="h-full rounded" style={{ width: (v == null ? 0 : v) + '%', background: nsColor(v) }} />
-              </div>
-              <span className="text-slate-400 truncate">{v == null ? 'Not enough data' : words(v)}</span>
-            </div>
-          ) })}
-          {ns.reasons && ns.reasons.length > 0 && <>
-            <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mt-4 mb-1">Why, in {ns.reasons.length} line{ns.reasons.length === 1 ? '' : 's'}</div>
-            {ns.reasons.map((r, i) => (
-              <div key={i} className="flex gap-2 text-[13px] text-slate-300 py-0.5">
-                <span style={{ color: r[0] === '+' ? '#00ff88' : '#ffb800' }}>{r[0] === '+' ? '▲' : '●'}</span>{r[1]}
-              </div>
-            ))}
-          </>}
-          <div className="text-[13px] text-slate-400 mt-3" data-testid="ns-flags">
-            <span className="text-terminal-red">⚑ Red flags:</span> {ns.flags && ns.flags.length ? ns.flags.join(' · ') : 'none found'}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-const MCScorePanel = React.memo(function MCScorePanel({ mc, ticker, isMobile, aiSummary, aiLoading, aiError, onGenerate }) {
-  const [openKey, setOpenKey] = useState(null)
-  const [showTrack, setShowTrack] = useState(false)
-  const [track, setTrack] = useState(null)
-  const [trackLoading, setTrackLoading] = useState(false)
-
-  if (!mc) {
-    return (
-      <div className="panel p-5">
-        <div className="flex items-center gap-2">
-          <Sparkles size={14} className="text-electric-400" />
-          <span className="font-display font-semibold text-[13px] text-slate-200">MC Score</span>
-        </div>
-        <div className="font-mono text-[11px] text-slate-600 mt-3">Score unavailable — not enough data for {ticker}.</div>
-      </div>
-    )
-  }
-
-  const col = mcColor(mc.score)
-  const range = mc.range || { low: mc.score, high: mc.score }
-  const learning = mc.learning || {}
-
-  const toggleTrack = async () => {
-    const next = !showTrack
-    setShowTrack(next)
-    if (!next || track || trackLoading) return
-    setTrackLoading(true)
-    try { setTrack(await jsonp(APPS_SCRIPT_URL + '?action=getScoreTrackRecord')) }
-    catch (e) { setTrack({ error: e.message }) }
-    finally { setTrackLoading(false) }
-  }
-
-  const regName = (mc.regime && mc.regime.name) || 'neutral'
-  const regText = regName === 'risk-on' ? 'risk-on market' : regName === 'risk-off' ? 'risk-off market' : 'neutral market'
-  const agreeText = !mc.agreement ? null : /strong/i.test(mc.agreement) ? 'Signals agree' : /mixed/i.test(mc.agreement) ? 'Signals are mixed' : /conflict/i.test(mc.agreement) ? 'Signals conflict' : mc.agreement
-  const factors = [...mc.factors].sort((a, b) => (b.score == null ? -1 : b.score) - (a.score == null ? -1 : a.score))
-  const greens = mc.flags.green.slice(0, 3), reds = mc.flags.red.slice(0, 2)
-
-  return (
-    <div className="panel p-5 font-display" data-testid="mc-panel">
-      {/* Header: one plain line instead of chips */}
-      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-5">
-        <div className="flex items-baseline gap-3 flex-wrap">
-          <InfoTip text={MC_SCORE_TIP}><span className="text-[16px] text-slate-100">MC Score</span></InfoTip>
-          <span className="text-[12px] text-slate-500">
-            {mc.confidence} confidence{mc.coverage < 90 ? ` · ${mc.coverage}% data` : ''}
-            {' · '}<InfoTip text={REGIME_TIP + (mc.regime && mc.regime.note ? `<br/><br/><b>Now:</b> ${mc.regime.note}${mc.regime.vix != null ? ` (VIX ${Number(mc.regime.vix).toFixed(1)})` : ''}` : '')}><span>{regText}</span></InfoTip>
-            {learning.active && <> · <InfoTip text={LEARN_TIP}><span>self-tuned ({learning.periods} mo)</span></InfoTip></>}
-          </span>
-        </div>
-        <button onClick={toggleTrack} className="text-[12px] text-slate-400 hover:text-slate-200 border border-white/10 hover:border-white/20 rounded-md px-3 py-1">
-          {showTrack ? 'Hide track record' : 'Track record'}
-        </button>
-      </div>
-
-      <div className={`grid gap-7 ${isMobile ? 'grid-cols-1' : 'grid-cols-12'}`}>
-        {/* The score */}
-        <div className={isMobile ? '' : 'col-span-3'}>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-slate-100" style={{ fontSize: 48, fontWeight: 500, lineHeight: 1 }}>{mc.score.toFixed(1)}</span>
-            <span className="text-[14px] text-slate-500">/10</span>
-          </div>
-          <div style={{ color: col }} className="text-[16px] mt-1.5">{oddsLabel(mc.label)} odds</div>
-          {mc.incomplete && <div className="text-[11px] text-terminal-amber mt-1.5 leading-snug">⚠ {mc.incomplete}</div>}
-          <div className="relative h-1 rounded mt-4" style={{ background: 'linear-gradient(90deg,#ff4466 0%,#ff4466 30%,#ffb800 45%,#ffb800 65%,#00ff88 80%,#00ff88 100%)', opacity: 0.8 }}>
-            <div className="absolute -top-1 h-3 rounded-sm" style={{ left: range.low * 10 + '%', width: Math.max(0.8, (range.high - range.low) * 10) + '%', border: '1px solid rgba(255,255,255,0.55)' }} />
-          </div>
-          <div className="text-[12px] text-slate-500 mt-3 leading-relaxed">
-            <div><InfoTip text={RANGE_TIP}><span>Likely {range.low.toFixed(1)}–{range.high.toFixed(1)}</span></InfoTip></div>
-            {mc.universe && mc.universe.rank && <div>#{mc.universe.rank} of {mc.universe.n} in your stocks</div>}
-            {mc.universe && mc.universe.market && <div>#{mc.universe.market.rank} of {mc.universe.market.n} in the wider market</div>}
-            {agreeText && <div><InfoTip text={AGREE_TIP}><span>{agreeText}</span></InfoTip></div>}
-            {mc.sector && <div className="text-slate-600">Compared with {mc.sector} peers</div>}
-          </div>
-          {mc.caps && mc.caps.length > 0 && (
-            <div className="mt-3 space-y-1">
-              {mc.caps.map((cp, i) => <div key={i} className="text-[11px] text-terminal-amber leading-snug">⚠ {cp}</div>)}
-            </div>
-          )}
-        </div>
-
-        {/* Factors — strongest first, details on tap */}
-        <div className={isMobile ? '' : 'col-span-5'}>
-          <div className="text-[12px] text-slate-500 mb-2">Factors</div>
-          <div className="space-y-0.5">
-            {factors.map(f => {
-              const base = f.baseWeight != null ? f.baseWeight : f.weight
-              const adjusted = Math.abs(f.weight - base) >= 0.005
-              const open = openKey === f.key
-              return (
-                <div key={f.key}>
-                  <button onClick={() => setOpenKey(open ? null : f.key)} aria-expanded={open} className="w-full flex items-center gap-3 py-1.5 text-left">
-                    <span className="text-[13px] text-slate-300 w-[150px] flex-shrink-0 truncate"><InfoTip text={FACTOR_TIPS[f.key]}><span>{f.name}</span></InfoTip></span>
-                    <div className="flex-1 h-1 bg-white/5 rounded overflow-hidden">
-                      <div style={{ width: f.score == null ? 0 : f.score * 10 + '%', background: mcColor(f.score) }} className="h-full rounded" />
-                    </div>
-                    <span className="text-[13px] text-slate-200 w-8 text-right flex-shrink-0">{f.score == null ? '—' : f.score.toFixed(1)}</span>
-                  </button>
-                  {open && (
-                    <div className="ml-1 mb-2 pl-3 border-l border-white/10 space-y-0.5 font-mono">
-                      {f.metrics.map(m => (
-                        <div key={m.label} className="flex justify-between gap-3 text-[11px]">
-                          <span className="text-slate-500">{m.label}</span>
-                          <span className="text-slate-300 text-right">{m.value}</span>
-                        </div>
-                      ))}
-                      <div className="text-[10px] text-slate-600 pt-1">Weight {Math.round(f.weight * 100)}%{adjusted ? ` (base ${Math.round(base * 100)}%, adjusted for the market / learned results)` : ''}</div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-          <div className="text-[11px] text-slate-600 mt-2">Tap a factor for its details</div>
-        </div>
-
-        {/* What drives it — at most 3 positives and 2 negatives */}
-        <div className={isMobile ? '' : 'col-span-4'}>
-          <div className="text-[12px] text-slate-500 mb-2">What drives it</div>
-          <div className="space-y-1.5">
-            {greens.map((sg, i) => <div key={'g' + i} className="flex gap-2 text-[13px] text-slate-300 leading-snug"><span className="text-terminal-green flex-shrink-0">▲</span>{sg}</div>)}
-            {reds.map((sg, i) => <div key={'r' + i} className="flex gap-2 text-[13px] text-slate-300 leading-snug"><span className="text-terminal-red flex-shrink-0">▼</span>{sg}</div>)}
-            {!greens.length && !reds.length && <div className="text-[13px] text-slate-600">No strong signals either way.</div>}
-          </div>
-        </div>
-      </div>
-
-      {/* Track record */}
-      {showTrack && (
-        <div className="mt-4 pt-4 border-t border-white/5">
-          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">
-            Live track record · your stocks · 30-day return after each score, vs S&amp;P 500
-          </div>
-          {trackLoading && <div className="font-mono text-[11px] text-slate-500 animate-pulse">Checking every past score against what happened next…</div>}
-          {track && track.error && <div className="font-mono text-[11px] text-terminal-red">{track.error}</div>}
-          {track && !track.error && !(track.months > 0) && (
-            <div className="font-mono text-[11px] text-slate-500 leading-relaxed">
-              Collecting data: {track.total} score{track.total === 1 ? '' : 's'} logged{track.firstDate ? ' since ' + track.firstDate : ''}.
-              {track.firstResults && <> First 30-day results on <span className="text-slate-300">{track.firstResults}</span>.</>}
-              {' '}Your whole universe is scored automatically every day, so evidence builds fast.
-            </div>
-          )}
-          {track && !track.error && track.months > 0 && (
-            <div className="space-y-3">
-              <div className="font-mono text-[11px] text-slate-300" data-testid="track-months">
-                {track.months} month{track.months === 1 ? '' : 's'} of results
-                {track.months < 6 && <span className="text-slate-500"> — too early to judge; about 6 months are needed</span>}
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>{['Rating', 'Stocks', 'Avg 30d', 'vs S&P 500', 'Beat S&P'].map((h, i) => (
-                      <th key={h} style={{ ...th, textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
-                    ))}</tr>
-                  </thead>
-                  <tbody>
-                    {track.buckets.map(b => { const base = b.label.startsWith('All stocks'); return (
-                      <tr key={b.label} style={base ? { borderTop: '1px solid rgba(148,163,184,0.15)' } : undefined}>
-                        <td style={{ ...td, color: base ? '#64748b' : '#cbd5e1', fontStyle: base ? 'italic' : 'normal' }}>{oddsLabel(b.label)}</td>
-                        <td style={{ ...td, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
-                        <td style={{ ...td, textAlign: 'right', color: pctColor(b.avgReturn) }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
-                        <td style={{ ...td, fontWeight: 700, textAlign: 'right', color: pctColor(b.avgVsSpy) }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
-                        <td style={{ ...td, color: '#94a3b8', textAlign: 'right' }}>{b.periods ? `${b.beatPeriods} of ${b.periods} mo` : '—'}</td>
-                      </tr>
-                    ) })}
-                  </tbody>
-                </table>
-              </div>
-              {track.icScore && track.icScore.mean != null && (
-                <div className="font-mono text-[11px] text-slate-400">
-                  <InfoTip text={IC_TIP}><span>Model skill (IC)</span></InfoTip>{' '}
-                  <span style={{ color: track.icScore.mean >= 0.05 ? '#00ff88' : track.icScore.mean > 0 ? '#ffb800' : '#ff4466', fontWeight: 700 }}>
-                    {track.icScore.mean >= 0 ? '+' : ''}{track.icScore.mean.toFixed(3)}
-                  </span>
-                  <span className="text-slate-600"> · t={track.icScore.t != null ? track.icScore.t.toFixed(1) : '—'} over {track.periods} independent period{track.periods === 1 ? '' : 's'}</span>
-                </div>
-              )}
-              {track.factors && (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr>{['Factor', 'IC', 't-stat', 'Weight now'].map((h, i) => (
-                        <th key={h} style={{ ...th, textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
-                      ))}</tr>
-                    </thead>
-                    <tbody>
-                      {track.factors.map(f => (
-                        <tr key={f.key}>
-                          <td style={{ ...td, color: '#cbd5e1' }}>{FACTOR_NAMES[f.key] || f.key}</td>
-                          <td style={{ ...td, textAlign: 'right', color: f.ic == null ? '#475569' : f.ic > 0 ? '#00ff88' : '#ff4466' }}>{f.ic == null ? '—' : (f.ic >= 0 ? '+' : '') + f.ic.toFixed(3)}</td>
-                          <td style={{ ...td, textAlign: 'right', color: '#64748b' }}>{f.t == null ? '—' : f.t.toFixed(1)}</td>
-                          <td style={{ ...td, textAlign: 'right', color: f.mult > 1.005 ? '#00ff88' : f.mult < 0.995 ? '#ff4466' : '#64748b' }}>×{(f.mult == null ? 1 : f.mult).toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <div className="font-mono text-[10px] text-slate-600 leading-relaxed">
-                Each month counts once (stocks in the same month share the same market move). A working model shows Very favorable &gt; Favorable &gt; Neutral &gt; Unfavorable in "vs S&amp;P 500", month after month.
-                {' '}{track.learning && track.learning.active ? `Some weights adjusted from ${track.learning.periods} months of results.` : 'Weights stay at the research base until a factor\'s edge is statistically clear.'}
-              </div>
-            </div>
-          )}
-          {track && !track.error && track.market && track.market.total > 0 && (
-            <div className="mt-4 pt-3 border-t border-white/5" data-testid="track-market">
-              <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600 mb-2">Wider market · S&amp;P 500 + Nasdaq-100 · not on your lists · measured separately</div>
-              {!(track.market.months > 0) ? (
-                <div className="font-mono text-[11px] text-slate-500 leading-relaxed">
-                  Collecting data: {track.market.total} score{track.market.total === 1 ? '' : 's'} logged{track.market.firstDate ? ' since ' + track.market.firstDate : ''}.
-                  {track.market.firstResults && <> First 30-day results on <span className="text-slate-300">{track.market.firstResults}</span>.</>}
-                </div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <div className="font-mono text-[11px] text-slate-300 mb-1">{track.market.months} month{track.market.months === 1 ? '' : 's'} of results{track.market.months < 6 && <span className="text-slate-500"> — too early to judge</span>}</div>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr>{['Rating', 'Stocks', 'Avg 30d', 'vs S&P 500', 'Beat S&P'].map((h, i) => (
-                        <th key={h} style={{ ...th, textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
-                      ))}</tr>
-                    </thead>
-                    <tbody>
-                      {track.market.buckets.map(b => { const base = b.label.startsWith('All stocks'); return (
-                        <tr key={b.label} style={base ? { borderTop: '1px solid rgba(148,163,184,0.15)' } : undefined}>
-                          <td style={{ ...td, color: base ? '#64748b' : '#cbd5e1', fontStyle: base ? 'italic' : 'normal' }}>{oddsLabel(b.label)}</td>
-                          <td style={{ ...td, color: '#64748b', textAlign: 'right' }}>{b.n}</td>
-                          <td style={{ ...td, textAlign: 'right', color: pctColor(b.avgReturn) }}>{b.avgReturn == null ? '—' : fmtPct(b.avgReturn, 1)}</td>
-                          <td style={{ ...td, fontWeight: 700, textAlign: 'right', color: pctColor(b.avgVsSpy) }}>{b.avgVsSpy == null ? '—' : fmtPct(b.avgVsSpy, 1)}</td>
-                          <td style={{ ...td, color: '#94a3b8', textAlign: 'right' }}>{b.periods ? `${b.beatPeriods} of ${b.periods} mo` : '—'}</td>
-                        </tr>
-                      ) })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Claude explanation + one quiet line */}
-      <div className="mt-5 pt-4 border-t border-white/5">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <span className="text-[11px] text-slate-600">Better odds of a steady result — not a prediction. Not financial advice.</span>
-          {!aiSummary && !aiLoading && (
-            <button onClick={onGenerate} title="Claude explains what drives the score and checks recent headlines for risks the numbers can't see (~$0.002)"
-              className="flex items-center gap-2 px-3 py-1 rounded-md border border-white/10 hover:border-white/20 text-[12px] text-slate-300 hover:text-white">
-              <Sparkles size={12} className="text-electric-400" /> Explain this score
-            </button>
-          )}
-        </div>
-        {aiLoading && (
-          <div className="flex items-center gap-3 pt-3">
-            <div className="w-4 h-4 rounded-full border-2 border-electric-500/30 border-t-electric-500 animate-spin flex-shrink-0" />
-            <div className="text-[13px] text-slate-500 animate-pulse">Claude is reviewing the factors and headlines for {ticker}…</div>
-          </div>
-        )}
-        {aiError && <div className="text-[12px] text-terminal-red pt-2">{aiError}</div>}
-        {aiSummary && (
-          <div className="text-[13px] text-slate-300 leading-relaxed whitespace-pre-wrap border-l-2 border-electric-500/30 pl-4 mt-3">{aiSummary}</div>
-        )}
-      </div>
-    </div>
-  )
-}, (prev, next) => (
-  prev.mc === next.mc && prev.ticker === next.ticker && prev.isMobile === next.isMobile &&
-  prev.aiSummary === next.aiSummary && prev.aiLoading === next.aiLoading && prev.aiError === next.aiError
-))
-
-// ── Stock Selector — isolated so typing doesn't re-render the score panel ──
+// ── Stock Selector — isolated so typing doesn't re-render the panels below ──
 const StockSelector = React.memo(function StockSelector({ allStocks, loading, onRun, presetTicker }) {
   const [ticker,   setTicker]   = React.useState(presetTicker || '')
   const [selectVal,setSelectVal]= React.useState('')
@@ -882,39 +500,16 @@ export function decisionRows(data, board, now = new Date()) {
   if (er) rows.push(er)
   // the calendar didn't answer: say so — never let "no row" read as "no earnings soon"
   else if (data.earningsOn === false) rows.push({ tone: 'warn', dir: 0, soon: 'unknown', text: "Earnings date unknown — the calendar didn't answer. Check before trading" })
-  const mc = data.mcScore
-  let mcCounted = false
-  if (mc && mc.score != null && mc.incomplete) rows.push({ tone: 'warn', dir: 0, text: `MC Score incomplete right now (${mc.score.toFixed(1)}) — ${/^Market data/.test(String(mc.incomplete)) ? 'market data' : 'price history'} unavailable; try again in a minute` })
-  // A low-confidence score (too little data behind it) is shown but never counted as a vote
-  else if (mc && mc.score != null && mc.confidence === 'Low') rows.push({ tone: 'na', dir: 0,
-    text: `MC Score ${mc.score.toFixed(1)} — too little data behind it${mc.coverage != null ? ` (${mc.coverage}%)` : ''}, not counted` })
-  else if (mc && mc.score != null) {
-    // same thresholds as the score's own label (6.5 / 4.5). A LOW score never votes negative: in your 5-year test the
-    // lowest scores had the highest average returns — so it is shown, not counted against the stock
-    const s = mc.score, band = s >= 6.5 ? 1 : s < 4.5 ? -1 : 0, d = band > 0 ? 1 : 0
-    mcCounted = true
-    rows.push({ tone: d > 0 ? 'pos' : 'na', dir: d,
-      text: `${band > 0 ? 'Favorable odds' : band < 0 ? 'Unfavorable odds' : 'Neutral odds'} — MC Score ${s.toFixed(1)}${mc.universe && mc.universe.rank ? ` (#${mc.universe.rank} of ${mc.universe.n})` : ''}${band < 0 ? ' — not counted as a negative' : ''}`,
-      sub: band > 0 ? 'Historically: beat the S&P more often, but lower average returns' : band < 0 ? 'Historically: many of the biggest winners had low scores' : null })
-  }
   const rdAge = board && !board.error && board.meta ? hoursAgo(board.meta.lastRun, now) : null
   if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
   else if (board.error) rows.push({ tone: 'na', dir: 0, text: 'News unavailable right now' })
-  else if (rdAge != null && rdAge > 2) rows.push({ tone: 'na', dir: 0, text: `News Radar last updated ${Math.round(rdAge)} h ago — news not counted` })
-  else if (board.meta && board.meta.headlines === 0) rows.push({ tone: 'na', dir: 0, text: 'News unavailable — the radar received no headlines (feeds may be down)' })
+  else if (rdAge != null && rdAge > 2) rows.push({ tone: 'na', dir: 0, text: `News last updated ${Math.round(rdAge)} h ago` })
+  else if (board.meta && board.meta.headlines === 0) rows.push({ tone: 'na', dir: 0, text: 'News unavailable — no headlines received (feeds may be down)' })
   else {
     const sig = (board.signals || []).find(x => x.ticker === data.ticker)
-    if (!sig || !sig.dir) rows.push({ tone: 'na', dir: 0, text: 'Not on the News Radar (last 2 days)' })
-    else {
-      // Only news the radar rates Medium or High, not AI-only, and not contradicted by the price, votes
-      // …and news the price has already reacted to ("late") is priced in: shown, not counted
-      const weak = sig.strength === 'Low', d = sig.against || sig.aiOnly || weak || sig.late ? 0 : sig.dir
-      const why = sig.aiOnly ? ' — inferred by AI, not counted' : weak ? ' — weak signal, not counted'
-        : sig.late ? ' — the price has already reacted, not counted' : ` — ${String(sig.strength || 'medium').toLowerCase()} signal on the News Radar`
-      rows.push({ tone: d > 0 ? 'pos' : d < 0 ? 'neg' : 'na', dir: d, url: sig.url,
-        text: `${sig.dir > 0 ? 'Positive' : 'Negative'} news${why}${sig.against ? ', but the stock is moving against it — not counted' : ''}`,
-        sub: sig.sec ? `The company also filed ${/^8/.test(sig.sec.form) ? 'an' : 'a'} ${sig.sec.form} on ${sig.sec.date} — open it to see if it's related` : null, subUrl: sig.sec ? sig.sec.url : null })
-    }
+    rows.push(!sig ? { tone: 'na', dir: 0, text: 'No news on this stock in the last 2 days' }
+      : { tone: 'info', dir: 0, url: sig.url, text: `In the news: ${sig.headline}${sig.source ? ' — ' + sig.source : ''}`,
+          sub: sig.sec ? `The company also filed ${/^8/.test(sig.sec.form) ? 'an' : 'a'} ${sig.sec.form} on ${sig.sec.date} — open it to see if it's related` : null, subUrl: sig.sec ? sig.sec.url : null })
   }
   if (data.secOn) {
     const f = (data.sec || [])[0]
@@ -926,28 +521,23 @@ export function decisionRows(data, board, now = new Date()) {
   // the Analyze payload stores each trade's date as `date` (Finnhub's transactionDate, renamed)
   const recent = (data.insiders || []).filter(x => new Date(x.date || x.transactionDate || x.filingDate).getTime() >= since)
   const buys = recent.filter(x => x.transactionCode === 'P' && x.isPlanBuy !== true), sells = recent.filter(x => x.transactionCode === 'S')
-  // Same rule as the MC Score: selling only matters when it is large relative to the company's size
+  // selling only matters when it is large relative to the company's size
   const mcapM = data.profile && Number(data.profile.marketCapitalization) > 0 ? Number(data.profile.marketCapitalization) : null
   const since180 = Date.now() - 180 * 864e5
   const sold180 = (data.insiders || []).filter(x => x.transactionCode === 'S' && new Date(x.date || x.transactionDate || x.filingDate).getTime() >= since180)
     .reduce((s, x) => s + Math.abs(Number(x.value) || 0), 0)
   const sellPct = mcapM ? sold180 / (mcapM * 1e6) * 100 : null
-  // Insider trades are already inside the MC Score (Smart money). When the score is counted, they are shown but don't vote
-  // a second time; without a counted score they vote on their own
-  const inMc = mcCounted ? ' — already part of the MC Score' : ''
-  rows.push(buys.length ? { tone: mcCounted ? 'info' : 'pos', dir: mcCounted ? 0 : 1, text: `Insiders bought shares with their own money (${buys.length} purchase${buys.length === 1 ? '' : 's'} in 90 days)${inMc}` }
-    : sellPct !== null && sellPct >= 1 ? { tone: mcCounted ? 'info' : 'neg', dir: mcCounted ? 0 : -1, text: `Insiders sold ~${sellPct.toFixed(1)}% of the company in 6 months — unusually large${inMc}` }
+  rows.push(buys.length ? { tone: 'pos', dir: 1, text: `Insiders bought shares with their own money (${buys.length} purchase${buys.length === 1 ? '' : 's'} in 90 days)` }
+    : sellPct !== null && sellPct >= 1 ? { tone: 'neg', dir: -1, text: `Insiders sold ~${sellPct.toFixed(1)}% of the company in 6 months — unusually large` }
     : sellPct !== null && sellPct >= 0.25 ? { tone: 'na', dir: 0, text: `Insiders sold ~${sellPct.toFixed(2)}% of the company in 6 months — notable, but not decisive` }
     : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — routine for a company this size, often pre-planned` }
     : { tone: 'na', dir: 0, text: 'No insider trades in the last 90 days' })
-  const pos = rows.filter(r => r.dir > 0).length, neg = rows.filter(r => r.dir < 0).length
-  const but = rows.some(r => r.soon === 'just') ? ' — but earnings just came out' : rows.some(r => r.soon === 'close') ? ' — but earnings are close'
-    : rows.some(r => r.soon === 'unknown') ? ' — but the earnings date is unknown' : ''
+  // facts only — no "signals agree" verdict (the tested signals didn't beat chance). The headline flags what needs care.
   const summary = rows.some(r => r.gate) ? { tone: 'warn', text: 'Verify the price first — the data sources disagree' }
-    : pos >= 2 && neg === 0 ? { tone: but ? 'warn' : 'pos', text: `Signals agree: positive (${pos} checks point the same way)${but}` }
-    : neg >= 2 && pos === 0 ? { tone: but ? 'warn' : 'neg', text: `Signals agree: negative (${neg} checks point the same way)${but}` }
-    : pos && neg ? { tone: 'warn', text: 'Signals conflict — be cautious' }
-    : { tone: 'na', text: 'No clear picture — not enough confirmed signals' }
+    : rows.some(r => r.soon === 'just') ? { tone: 'warn', text: 'Earnings just came out — expect a big move' }
+    : rows.some(r => r.soon === 'close') ? { tone: 'warn', text: 'Earnings are close — expect a big move either way' }
+    : rows.some(r => r.soon === 'unknown') ? { tone: 'warn', text: 'Earnings date unknown — check before trading' }
+    : { tone: 'na', text: 'Facts to check — no buy/sell call' }
   return { rows, summary }
 }
 const DC_TONE = { ok: ['✓', '#00ff88'], pos: ['▲', '#00ff88'], neg: ['▼', '#ff4466'], warn: ['⚠', '#ffb800'], info: ['•', '#94a3b8'], na: ['·', '#475569'] }
@@ -980,7 +570,7 @@ function DecisionCheck({ data }) {
           )
         })}
       </div>
-      <div className="mt-3 text-[11px] text-slate-600">Weak, AI-only or contradicted signals don't count toward agreement. This is a checklist, not advice.</div>
+      <div className="mt-3 text-[11px] text-slate-600">A checklist of facts, not advice.</div>
     </div>
   )
 }
@@ -991,9 +581,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [loading,     setLoading]     = useState(false)
   const [error,       setError]       = useState(null)
   const [chartPeriod, setChartPeriod] = useState('1Y')
-  const [aiSummary,   setAiSummary]   = useState(null)
-  const [aiLoading,   setAiLoading]   = useState(false)
-  const [aiError,     setAiError]     = useState(null)
   const lastAutoTicker = useRef(null)
   // every answer is checked against the request that is current NOW — a slow answer for an earlier ticker is dropped
   const runSeq = useRef(0), shownTicker = useRef(null)
@@ -1004,7 +591,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
     const seq = ++runSeq.current
     shownTicker.current = null
     setLoading(true); setError(null); setData(null); setRevenueData(null); setChartPeriod('1Y')
-    setAiSummary(null); setAiError(null); setAiLoading(false)
     try {
       const d = await fetchWorkstationData(target)
       if (seq !== runSeq.current) return
@@ -1021,20 +607,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
       if (seq === runSeq.current) setLoading(false)
     }
   }
-
-  const fetchAISummary = React.useCallback(async () => {
-    if (!data) return
-    const ticker = data.ticker
-    setAiLoading(true); setAiError(null)
-    try {
-      const result = await jsonp(APPS_SCRIPT_URL + '?action=getAISummary&ticker=' + encodeURIComponent(ticker))
-      if (shownTicker.current !== ticker) return                    // you moved on to another stock
-      if (result.locked) setAiError('The AI summary is for the owner only — unlock with your owner key in My Portfolios')
-      else if (result.error) setAiError(result.error)
-      else setAiSummary(result.summary)
-    } catch (e) { if (shownTicker.current === ticker) setAiError(e.message) }
-    finally { if (shownTicker.current === ticker) setAiLoading(false) }
-  }, [data])
 
   useEffect(() => {
     if (initialTicker && initialTicker !== lastAutoTicker.current) {
@@ -1053,7 +625,7 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
 
   return (
     <div className="space-y-4">
-      {/* Selector bar — isolated to prevent score panel flicker */}
+      {/* Selector bar — isolated to prevent panel flicker */}
       <StockSelector
         allStocks={allStocks}
         loading={loading}
@@ -1166,20 +738,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
           </div>
 
           <DecisionCheck key={data.ticker} data={data} />
-
-          {/* New score (trial) — next to the MC Score while the two are compared */}
-          <NewScorePanel ns={data.newScore} ticker={data.ticker} isMobile={isMobile} />
-
-          {/* MC Score — quantitative model + Claude explanation */}
-          <MCScorePanel
-            mc={data.mcScore}
-            ticker={data.ticker}
-            isMobile={isMobile}
-            aiSummary={aiSummary}
-            aiLoading={aiLoading}
-            aiError={aiError}
-            onGenerate={fetchAISummary}
-          />
 
           {/* Phase 1: Earnings Quality + Price Targets + Insider Activity */}
           <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
@@ -1412,8 +970,8 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
               </div>
               {data.fairValue ? (() => {
                 const fv = data.fairValue
-                // current price: the Sheet's, else the score's own price — upside only when both numbers are real
-                const currentPrice = livePrice?.price ?? data.mcScore?.price ?? null
+                // current price: the Sheet's, else Finnhub's live quote — upside only when both numbers are real
+                const currentPrice = livePrice?.price ?? data.priceCheck?.fh ?? null
                 const upside = fv.fairValue && currentPrice ? ((fv.fairValue - currentPrice) / currentPrice) * 100 : null
                 const isUnder = upside != null && upside > 0
                 return (
