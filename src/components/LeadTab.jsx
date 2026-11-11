@@ -371,12 +371,19 @@ export function NewsFeed({ onAnalyze, isMobile, mine = [] }) {
   const mineSet = new Set((mine || []).map(t => String(t).toUpperCase()))
   const t = e => new Date(e.time).getTime() || 0
   const all = ((data && data.events) || []).slice().sort((a, b) => t(b) - t(a))
-  const scoped = scope === 'mine' ? all.filter(e => mineSet.has(e.ticker)) : all
+  const isPriceOnly = e => e.priceOnly || (e.type === 'move' && (e.reports || []).every(r => r.source === 'Price data'))
+  const inScope = scope === 'mine' ? all.filter(e => mineSet.has(e.ticker)) : all
+  // big price moves with no news found yet: one compact line, not a row each
+  const moves = inScope.filter(isPriceOnly).sort((a, b) => Math.abs((b.move || {}).pct || 0) - Math.abs((a.move || {}).pct || 0))
+  const scoped = inScope.filter(e => !isPriceOnly(e))
   const main = scoped.filter(e => e.tier !== 2), small = scoped.filter(e => e.tier === 2)
   const list = showSmall ? scoped : main
   const shown = showAll ? list : list.slice(0, 12)
   const key = e => e.ticker + '|' + e.type
   const nMine = all.filter(e => mineSet.has(e.ticker)).length
+  const pct = m => m && m.pct != null ? (m.pct > 0 ? '+' : '') + Number(m.pct).toFixed(1) + '%' : ''
+  const pctCls = m => m && m.pct > 0 ? 'text-terminal-green' : 'text-terminal-red'
+  const moveWhen = moves.length && moves[0].move && moves[0].move.when ? moves[0].move.when : ''
   const chip = (id, label) => (
     <button key={id} onClick={() => { setScope(id); setShowAll(false) }} aria-pressed={scope === id}
       className={`text-[12px] px-3 py-1 rounded-md border transition-colors ${scope === id ? 'border-electric-400/60 bg-electric-500/15 text-slate-100' : 'border-white/10 text-slate-400 hover:text-slate-200'}`}>{label}</button>
@@ -396,8 +403,19 @@ export function NewsFeed({ onAnalyze, isMobile, mine = [] }) {
       {!data && !err && <div className="py-8 text-center text-[12px] text-slate-500 animate-pulse">Loading the news…</div>}
       {err && <div className="py-8 text-center text-[12px] text-terminal-amber">News unavailable right now — {err}</div>}
       {data && !data.asOf && <div className="py-8 text-center text-[12px] text-slate-500">The news scanner hasn't run yet.</div>}
-      {data && data.asOf && !list.length && (
+      {data && data.asOf && !list.length && !moves.length && (
         <div className="py-8 text-center text-[13px] text-slate-500">{scope === 'mine' ? 'No important news on your S&P 500 stocks in the last 2 days.' : 'No important news in the last 2 days.'}</div>
+      )}
+
+      {moves.length > 0 && (
+        <div className="border-t border-white/5 py-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="price-moves">
+          <span className="text-[12px] text-slate-500">Big price moves{moveWhen && moveWhen !== 'today' ? ' ' + moveWhen : ' today'}, no news found yet:</span>
+          {moves.map(e => (
+            <button key={e.ticker} onClick={() => onAnalyze && onAnalyze(e.ticker)} className="font-mono text-[12px] text-slate-300 hover:text-white">
+              {e.ticker}{mineSet.has(e.ticker) && <span className="text-electric-400">•</span>} <span className={pctCls(e.move)}>{pct(e.move)}</span>
+            </button>
+          ))}
+        </div>
       )}
 
       {shown.length > 0 && (
@@ -408,6 +426,7 @@ export function NewsFeed({ onAnalyze, isMobile, mine = [] }) {
               <div key={k} className="border-b border-white/5">
                 <button onClick={() => setOpenKey(open ? null : k)} aria-expanded={open} className="w-full flex items-center gap-3 py-2.5 text-left hover:bg-white/[0.02]">
                   <span className="font-mono text-[13px] text-slate-200 w-14 flex-shrink-0">{e.ticker}{yours && <span title="One of your stocks" className="text-electric-400"> •</span>}</span>
+                  {!isMobile && <span title={e.move ? 'Price move ' + (e.move.when || '') : ''} className={`font-mono text-[11px] w-12 flex-shrink-0 text-right ${pctCls(e.move)}`}>{pct(e.move)}</span>}
                   {!isMobile && <span className="text-[11px] text-slate-500 w-[150px] flex-shrink-0 truncate">{e.label}</span>}
                   <span className={`text-[13px] text-slate-300 flex-1 min-w-0 ${isMobile ? '' : 'truncate'}`}>{stripSource(e.headline, e.source)}</span>
                   {!isMobile && <span className="text-[11px] text-slate-500 flex-shrink-0 max-w-[170px] truncate">{e.official ? 'Official · ' : ''}{e.source}{more(e)}</span>}
