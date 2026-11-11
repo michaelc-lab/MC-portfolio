@@ -1,12 +1,23 @@
 # MC Portfolio — S&P 500 news scanner (runs on GitHub's servers, free; public repo = unlimited minutes).
-# Test run: GitHub → Actions → "News scan" → Run workflow. Takes ~5 minutes.
-# Writes reports/news-scan.md: which sources worked + the important events it found (public S&P 500 news only,
-# nothing about your holdings). No buy/sell direction is ever assigned.
+# Started every 30 minutes by the MC News worker on Cloudflare (GitHub's own timer below is only a backup).
+# Reads several free sources, keeps important events on S&P 500 companies, sends the result to the worker,
+# which the dashboard reads. Public S&P 500 news only — nothing about your holdings. No buy/sell direction.
+# Manual run: Actions → "News scan" → Run workflow (tick "save report" to also save reports/news-scan.md here).
 name: News scan
 on:
   workflow_dispatch:
+    inputs:
+      save_report:
+        description: "Also save reports/news-scan.md in the repo"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "41 */3 * * *"        # backup only: every 3 hours, in case the worker's 30-minute start fails
 permissions:
   contents: write
+concurrency:
+  group: news-scan
+  cancel-in-progress: false
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -23,6 +34,8 @@ jobs:
           SEC_UA: ${{ vars.SEC_UA }}
           TIINGO_KEY: ${{ secrets.TIINGO_KEY }}
           FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+          NEWS_URL: https://mc-news.mikycohen1.workers.dev/news
+          NEWS_TOKEN: ${{ secrets.NEWS_TOKEN }}
         run: |
           mkdir -p /tmp/scan
           cat > /tmp/scan/news_scan.py <<'PYEOF'
@@ -81,7 +94,7 @@ jobs:
               ("contract", "Major contract / deal", r"\b((wins?|awarded|lands?|secures?|signs?) (a |an )?(\$[\d.,]+ ?(billion|million|bn|m)? )?(\w+ ){0,3}(contract|deal|order|agreement)|"
                                                    r"(contract|order|deal) (worth|valued at) \$|multi-?billion|\$[\d.,]+ ?(billion|bn) (contract|deal|order|investment|partnership))\b"),
               ("capital", "Dividend / buyback", r"\b((raises?|hikes?|boosts?|increases?|cuts?|suspends?|slashes?|initiates?|declares? (a )?special) (its |the |quarterly )*dividend|"
-                                                r"dividend (cut|hike|increase|raise|suspension|boost)|(share|stock) (buyback|repurchase)|buyback|repurchase program|stock split)\b"),
+                                                r"dividend (cut|hike|increase|raise|suspension|boost)|(share|stock) (buybacks?|repurchases?)|buybacks?|repurchase program|stock split)\b"),
               ("layoffs", "Layoffs / restructuring", r"\b(layoffs?|lays? off|job cuts?|cut(s|ting)? (about |nearly |some |over )?(\d[\d,]* )?(\w+ )?(jobs|workers|staff|employees|positions|roles)|restructuring|plant closure|close (\d+ )?(stores|plants|factories))\b"),
               ("rating", "Analyst / credit rating change", r"\b(upgrade[sd]?|downgrade[sd]?|initiates? coverage|price target (cut|raised|lowered|hiked)|(cuts?|raises?) (its |the )?price target|credit rating|outlook to (negative|positive))\b"),
               ("index", "Index change", r"\b(added to|join(s|ing)?|removed from|dropped from|to replace \w+ in) the s&p 500\b|\bs&p 500 (addition|inclusion|rebalanc\w*)\b"),
@@ -99,7 +112,12 @@ jobs:
               r"price prediction|(stock|share) forecast|podcast|live updates?|live blog|what to watch|stock market today|market (wrap|recap|roundup)|"
               r"morning (brief|briefing|bid)|week ahead|movers|trending|in focus|here'?s why|why (is )?\w+( \w+)? (stock|shares) (is |are )?(up|down|falling|rising|soaring|plunging)|"
               r"(dividend|earnings) (calendar|preview|stocks)|ahead of earnings|earnings (preview|expectations|whisper)|what to expect|options (activity|traders)|unusual options|"
-              r"short interest|technical analysis|chart of the day|etf|mutual fund|vs\.? )\b", re.I)
+              r"short interest|technical analysis|chart of the day|etf|mutual fund|vs\.? |should (you|investors)|transcript|earnings call (highlights|recap|takeaways)|"
+              r"said on (its|the) .{0,20}call|to host|conference call|webcast|(to|will) (report|announce|release|post) .{0,40}(results|earnings)|earnings date|draws focus|"
+              r"investor alert|shareholder alert|lead plaintiff|investors who (lost|bought|purchased)|(rosen|pomerantz|bronstein|levi & korsinsky|faruqi|bragar|kessler topaz|"
+              r"glancy|robbins geller|gainey|schall|portnoy|kahn swick|bernstein liebhard|johnson fistel|holzer)|lawsuit probes|net[- ]leased?|"
+              r"ytd|year[- ]to[- ]date|from (its |the )?(\w+ )?(peak|high|low)|since (its )?(ipo|peak|high|low)|52[- ]week|all[- ]time high)\b", re.I)
+          QUESTION_RE = re.compile(r"^\s*(should|will|is|are|can|could|does|do|did|what|why|how|which|who|has|have)\b", re.I)
           JUNK_SOURCES = re.compile(r"marketbeat|etf daily news|defense world|the lincolnian|tickerreport|american banking news|zolmax|"
                                     r"modern readers|the enterprise leader|thecerbatgems|motley fool|fool\.com|zacks|stock titan|simply wall|"
                                     r"gurufocus|investorsobserver|ainvest|stocktwits|tipranks|marketscreener|dividend\.com", re.I)
@@ -116,7 +134,7 @@ jobs:
               "JPM": ["JPMorgan", "JP Morgan"], "XOM": ["Exxon", "ExxonMobil", "Exxon Mobil"], "DIS": ["Disney"], "BAC": ["Bank of America", "BofA"],
               "JNJ": ["Johnson & Johnson", "J&J"], "PG": ["Procter & Gamble", "P&G"], "IBM": ["IBM"], "KO": ["Coca-Cola"], "LLY": ["Eli Lilly", "Lilly"],
               "UNH": ["UnitedHealth"], "BRK.B": ["Berkshire Hathaway", "Berkshire"], "MCD": ["McDonald's", "McDonald’s"], "HD": ["Home Depot"],
-              "WMT": ["Walmart"], "COST": ["Costco"], "TSLA": ["Tesla"], "NVDA": ["Nvidia"], "AMD": ["AMD", "Advanced Micro Devices"], "AVGO": ["Broadcom"],
+              "WMT": ["Walmart"], "COST": ["Costco"], "TSLA": ["Tesla"], "NVDA": ["Nvidia", "NVIDIA"], "AMD": ["AMD", "Advanced Micro Devices"], "AVGO": ["Broadcom"],
               "GS": ["Goldman Sachs", "Goldman"], "MS": ["Morgan Stanley"], "C": ["Citigroup", "Citi"], "WFC": ["Wells Fargo"], "CVX": ["Chevron"],
               "PFE": ["Pfizer"], "MRK": ["Merck"], "ABBV": ["AbbVie"], "BMY": ["Bristol Myers", "Bristol-Myers"], "UPS": ["UPS"], "FDX": ["FedEx"],
               "BA": ["Boeing"], "LMT": ["Lockheed Martin", "Lockheed"], "RTX": ["RTX", "Raytheon"], "GE": ["GE Aerospace"], "GEV": ["GE Vernova"],
@@ -237,20 +255,32 @@ jobs:
                       rx = re.compile(r"(?<![\w&])(" + "|".join(re.escape(w) for w in words) + r")(?:'s|’s)?(?![\w&])")
                       self.pats.append((t, rx, words))
 
-              def find(self, title):
-                  """Tickers of S&P 500 companies named in a headline (case-sensitive name match + guards)."""
-                  found = []
+              def find_pos(self, title):
+                  """{ticker: position} of S&P 500 companies named in a headline (case-sensitive name match + guards)."""
+                  found = {}
                   tl = " " + title + " "
                   for t, rx, words in self.pats:
                       m = rx.search(tl)
                       if not m:
                           continue
-                      if m.group(1).lower() in AMBIG_WORDS:
+                      word, a, b = m.group(1), m.start(1), m.end()
+                      if word.lower() in AMBIG_WORDS:
                           tick = re.search(r"\(\s*(?:NYSE|NASDAQ|Nasdaq|NYSEARCA)?\s*:?\s*" + re.escape(t) + r"\s*\)|\$" + re.escape(t) + r"\b", tl)
-                          corp = re.search(re.escape(m.group(1)) + r"(?:'s|’s)? (?:Inc|Corp|Corporation|Co\b|shares|stock|CEO|CFO|earnings|results|revenue|profit|sales|to acquire|agrees|reports|beats|misses|raises|cuts|names|said)", tl)
+                          corp = re.search(re.escape(word) + r"(?:'s|’s)? (?:Inc|Corp|Corporation|Co\b|shares|stock|CEO|CFO|earnings|results|revenue|profit|sales|to acquire|agrees|reports|beats|misses|raises|cuts|names|said)", tl)
                           if not tick and not corp:
                               continue
-                      found.append(t)
+                      if re.search(r"\b(former|ex-|ex)\s*$", tl[max(0, a - 8):a], re.I):          # "former Disney CEO"
+                          continue
+                      if re.match(r"\s*(Arena|Center|Centre|Stadium|Field|Park|Bowl|Cup|Classic|Open|Championship|Foundation|Tower|Plaza|Theater|Theatre|"
+                                  r"dealer|dealers|supplier|suppliers|rival|rivals|peer|peers|customer|partner|Otosan|KGaA|Games)\b", tl[b:]):
+                          continue
+                      if t == "MRK" and re.search(r"KGaA|Darmstadt|\bEMD\b", tl):
+                          continue
+                      found[t] = a
+                  return found
+
+              def find(self, title):
+                  found = list(self.find_pos(title))
                   # a bank or rating agency mentioned next to another company is the source, not the subject
                   if len(found) > 1:
                       subj = [t for t in found if t not in COMMENTATORS]
@@ -258,12 +288,28 @@ jobs:
                           found = subj
                   return found
 
-              def find_for(self, title, etype):
-                  found = self.find(title)
+              def find_for(self, title, etype, epos=0):
+                  pos = self.find_pos(title)
+                  if len(pos) > 1:
+                      subj = {t: p for t, p in pos.items() if t not in COMMENTATORS}
+                      if subj:
+                          pos = subj
                   # "Moody's cuts US rating", "Goldman says…": a bank or agency alone in a rating story is the source, not the subject
-                  if etype == "rating" and found and all(t in COMMENTATORS for t in found):
+                  if etype == "rating" and pos and all(t in COMMENTATORS for t in pos):
                       return []
-                  return found
+                  if not pos:
+                      return []
+                  # a company only mentioned in a side clause ("Qantas cuts jobs AS Accenture takes over", "…WITH Bank of America")
+                  # is not the subject of the event named in the main clause
+                  cuts = [m.start() for m in re.finditer(r"\s(as|while|amid|despite|following|with|from|after|on|over)\s|;\s|,\s", title)]   # "IT layoffs: Cognizant…" — a colon is a header, not a side clause
+                  clause = lambda p: sum(1 for c in cuts if c < p)
+                  ec = clause(epos)
+                  keep = {t: p for t, p in pos.items() if clause(p) <= ec}
+                  if not keep:
+                      return []
+                  if etype == "move":      # a price move belongs to the first company named, not to rivals in the same headline
+                      return [min(keep, key=keep.get)]
+                  return sorted(keep, key=keep.get)
 
 
           # ── sources ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -410,13 +456,30 @@ jobs:
 
 
           # ── classify + merge ─────────────────────────────────────────────────────────────────────────────────────────────
-          def event_type(title):
-              if JUNK_RE.search(title):
-                  return None
+          SEVERE = ("bankruptcy", "restatement")
+
+
+          def event_match(title):
+              """(event type, position of the words that define it) — or (None, -1) for junk / no important event.
+              Bankruptcy and accounting problems always win; otherwise the event named FIRST in the headline wins
+              ("Skydance Games confirms layoffs after merger" is about layoffs)."""
+              if JUNK_RE.search(title) or QUESTION_RE.search(title):
+                  return None, -1
+              hits = []
               for k, _, rx in EVENT_RES:
-                  if rx.search(title):
-                      return k
-              return None
+                  m = rx.search(title)
+                  if m:
+                      if k in SEVERE:
+                          return k, m.start()
+                      hits.append((m.start(), k))
+              if not hits:
+                  return None, -1
+              pos, k = min(hits)
+              return k, pos
+
+
+          def event_type(title):
+              return event_match(title)[0]
 
 
           def norm_title(t):
@@ -464,10 +527,10 @@ jobs:
                   if k in seen:
                       continue
                   seen.add(k)
-                  et = event_type(title)
+                  et, epos = event_match(title)
                   if not et:
                       continue
-                  tick = matcher.find_for(title, et)
+                  tick = matcher.find_for(title, et, epos)
                   if not tick or len(tick) > 3:      # 4+ companies in one headline = a roundup, not an event
                       continue
                   for t in tick:
@@ -513,6 +576,9 @@ jobs:
               for ev in events.values():
                   names = {r["source"].lower() for r in ev["reports"] if r["source"] != "Price data"}
                   ev["sourceCount"] = len(names)
+                  major = any(MAJOR_SOURCES.search(r["source"]) for r in ev["reports"])
+                  # tier 1 = shown by default: an official release / filing, a major outlet, or 2+ independent sources (or a real price move)
+                  ev["tier"] = 1 if (ev["official"] or major or len(names) >= 2 or ev["type"] == "move" and any(r["source"] == "Price data" for r in ev["reports"])) else 2
                   # a lone "Big price move" from price data alone is kept; any other event needs a real report
                   if not names and ev["type"] != "move":
                       continue
@@ -587,7 +653,16 @@ jobs:
                   note("Tiingo price moves (backup)", "not needed" if moves else "no key", 0, "")
 
               prev = []
-              if os.path.exists(out_path):
+              news_url, news_token = os.environ.get("NEWS_URL"), os.environ.get("NEWS_TOKEN")
+              if news_url:   # the last result, kept by the MC News worker, so events stay listed for 48h
+                  st_p, body_p = fetch(news_url, ua=SEC_UA, timeout=30)
+                  if st_p == 200 and body_p:
+                      try:
+                          prev = json.loads(body_p).get("events", [])
+                      except Exception:
+                          prev = []
+                  print(f"previous result from the worker: HTTP {st_p}, {len(prev)} events")
+              elif os.path.exists(out_path):
                   try:
                       with open(out_path) as f:
                           prev = json.load(f).get("events", [])
@@ -599,6 +674,14 @@ jobs:
               with open(out_path, "w") as f:
                   json.dump(doc, f, separators=(",", ":"))
               print(f"S&P 500 list: {len(members)} ({list_src}) · stories read: {len(stories)} · events kept: {len(events)}")
+              if news_url and news_token:
+                  req = urllib.request.Request(news_url, data=json.dumps(doc, separators=(",", ":")).encode(), method="POST",
+                                               headers={"Authorization": "Bearer " + news_token, "Content-Type": "application/json", "User-Agent": SEC_UA})
+                  try:
+                      with urllib.request.urlopen(req, timeout=60) as r:
+                          print("sent to the worker:", r.status, r.read().decode()[:200])
+                  except urllib.error.HTTPError as e:
+                      raise SystemExit(f"Could not send the result to the worker: HTTP {e.code} {e.read().decode()[:200]}")
 
               if report_path:
                   lines = ["# S&P 500 news scan — source check", "", f"Run: {NOW.strftime('%Y-%m-%d %H:%M UTC')} · S&P 500 list: {len(members)} companies ({list_src})",
@@ -612,7 +695,7 @@ jobs:
                   lines += ["", "## Events by type", ""] + [f"- {k}: {v}" for k, v in sorted(by_type.items(), key=lambda x: -x[1])]
                   lines += ["", "## All events (newest first)", "", "| Ticker | Type | Sources | Headline | Source |", "|---|---|---|---|---|"]
                   for e in events:
-                      lines.append(f"| {e['ticker']} | {e['label']} | {e['sourceCount']}{' · official' if e['official'] else ''} | {e['headline'][:110].replace('|', '/')} | {e['source']} |")
+                      lines.append(f"| {e['ticker']} | {e['label']} | T{e['tier']} · {e['sourceCount']}{' · official' if e['official'] else ''} | {e['headline'][:110].replace('|', '/')} | {e['source']} |")
                   os.makedirs(os.path.dirname(os.path.abspath(report_path)), exist_ok=True)
                   with open(report_path, "w") as f:
                       f.write("\n".join(lines) + "\n")
@@ -623,7 +706,8 @@ jobs:
 
           PYEOF
           python /tmp/scan/news_scan.py /tmp/scan/news.json reports/news-scan.md
-      - name: Save the report to the repo
+      - name: Save the report to the repo (manual runs only, when ticked)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.save_report }}
         run: |
           git config user.name "news-scan"
           git config user.email "actions@users.noreply.github.com"
