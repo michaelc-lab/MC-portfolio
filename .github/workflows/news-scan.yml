@@ -372,9 +372,19 @@ jobs:
           AP_FEEDS = ["https://apnews.com/hub/business.rss", "https://feedx.net/rss/ap.xml", "https://rsshub.app/apnews/topics/business"]
 
 
+          GOOGLE_STATE = {"fails": 0, "off": False}
+
+
           def google_news(q):
+              """One Google News search. After 3 failures in a row Google is skipped for the rest of the run
+              (it slows down or blocks when asked too often — the run must never hang waiting for it)."""
+              if GOOGLE_STATE["off"]:
+                  return "skipped", []
               url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(q + " when:1d") + "&hl=en-US&gl=US&ceid=US:en"
-              st, body = fetch(url)
+              st, body = fetch(url, timeout=12, tries=1)
+              GOOGLE_STATE["fails"] = 0 if st == 200 else GOOGLE_STATE["fails"] + 1
+              if GOOGLE_STATE["fails"] >= 3:
+                  GOOGLE_STATE["off"] = True
               return st, parse_rss(body, "Google News")
 
 
@@ -611,13 +621,17 @@ jobs:
               start = (int(NOW.timestamp() // 1800) * slice_n) % len(members)
               rot = (members + members)[start:start + slice_n]
               g_ok = g_items = 0
+              t_rot = time.time()
               for m in rot:
+                  if time.time() - t_rot > 150 or GOOGLE_STATE["off"]:   # time budget: the whole run stays well under 10 minutes
+                      break
                   st, items = google_news('"%s"' % (ALIASES.get(m["ticker"], [clean_name(m["name"])])[0]))
                   g_ok += st == 200
                   g_items += len(items)
                   stories += items
                   time.sleep(0.8)
-              note("Google News: company searches (%d this run)" % len(rot), 200 if g_ok else "fail", g_items, f"{g_ok}/{len(rot)} answered")
+              note("Google News: company searches (%d this run)" % len(rot), 200 if g_ok else "fail", g_items,
+                   f"{g_ok}/{len(rot)} answered" + (" — Google stopped answering, skipped the rest" if GOOGLE_STATE["off"] else ""))
               for name, fid in CNBC_FEEDS.items():
                   st, body = fetch("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=%d" % fid)
                   items = parse_rss(body, "CNBC")
