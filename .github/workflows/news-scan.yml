@@ -96,7 +96,7 @@ jobs:
               ("capital", "Dividend / buyback", r"\b((raises?|hikes?|boosts?|increases?|cuts?|suspends?|slashes?|initiates?|declares? (a )?special) (its |the |quarterly )*dividend|"
                                                 r"dividend (cut|hike|increase|raise|suspension|boost)|(share|stock) (buybacks?|repurchases?)|buybacks?|repurchase program|stock split)\b"),
               ("layoffs", "Layoffs / restructuring", r"\b(layoffs?|lays? off|job cuts?|cut(s|ting)? (about |nearly |some |over )?(\d[\d,]* )?(\w+ )?(jobs|workers|staff|employees|positions|roles)|restructuring|plant closure|close (\d+ )?(stores|plants|factories))\b"),
-              ("rating", "Analyst / credit rating change", r"\b(upgrade[sd]?|downgrade[sd]?|initiates? coverage|price target (cut|raised|lowered|hiked)|(cuts?|raises?) (its |the )?price target|credit rating|outlook to (negative|positive))\b"),
+              ("rating", "Rating change", r"\b(upgrade[sd]?|downgrade[sd]?|initiates? coverage|price target (cut|raised|lowered|hiked)|(cuts?|raises?) (its |the )?price target|credit rating|outlook to (negative|positive))\b"),
               ("index", "Index change", r"\b(added to|join(s|ing)?|removed from|dropped from|to replace \w+ in) the s&p 500\b|\bs&p 500 (addition|inclusion|rebalanc\w*)\b"),
               ("move", "Big price move", r"\b(shares?|stock)\b[^.]{0,30}\b(soar\w*|surg\w*|plung\w*|plummet\w*|tumbl\w*|sink\w*|sank|crash\w*|skyrocket\w*|tank\w*|"
                                          r"jump(s|ed)? \d+|(fall|fell|drop\w*|slid\w*|rall\w*|ris\w*|climb\w*|gain\w*|los\w*) (as much as |more than |nearly |over )?\d{1,3}(\.\d)?%)"),
@@ -548,7 +548,8 @@ jobs:
 
               seen = set()
               for s in stories:
-                  title = (s.get("title") or "").strip()
+                  title = re.sub(r"\s+(By|via) (Investing\.com|Reuters|Bloomberg|MarketWatch|Benzinga|Zacks)\s*$", "", (s.get("title") or "").strip())
+                  s = dict(s, title=title)
                   if not title or JUNK_SOURCES.search(s.get("source") or "") or JUNK_SOURCES.search(s.get("url") or ""):
                       continue
                   k = norm_title(title) + "|" + (s.get("source") or "").lower()
@@ -597,6 +598,19 @@ jobs:
               for ev in prev_events or []:
                   if ev.get("type") == "move" and (ev.get("priceOnly") or any(r.get("source") == "Price data" for r in ev.get("reports", []))):
                       continue                     # price-only lines are rebuilt from fresh prices every run, never carried over
+                  # earlier runs used earlier rules: every carried-over report must still pass today's rules
+                  def still_ok(r):
+                      if r.get("source") == "SEC filing" or OFFICIAL_SOURCES.search(r.get("source") or ""):
+                          return True
+                      et, ep = event_match(r.get("headline") or "")
+                      return et == ev.get("type") and ev["ticker"] in matcher.find_for(r.get("headline") or "", et, ep)
+                  ev = dict(ev, reports=[r for r in ev.get("reports", []) if still_ok(r)])
+                  if not ev["reports"]:
+                      continue
+                  if not still_ok({"headline": ev.get("headline"), "source": ev.get("source")}):
+                      best = ev["reports"][0]
+                      ev.update({"headline": best["headline"], "url": best["url"], "source": best["source"]})
+                  ev.pop("tier", None)
                   key = (ev["ticker"], ev["type"])
                   try:
                       if datetime.fromisoformat(ev["time"]) < cutoff:
