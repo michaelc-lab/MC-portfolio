@@ -52,6 +52,9 @@ export function firstOnOrAfter(series, date) {
   return i < 0 ? null : series.d[i]
 }
 
+// the last day of the previous year (the Dec 31 close an undated purchase is counted from)
+export const yearEnd = today => `${Number(String(today || new Date().toISOString()).slice(0, 4)) - 1}-12-31`
+
 // period start for 1M / YTD / 1Y / ALL (ALL → null)
 export function periodStart(period, today = new Date()) {
   const iso = d => d.toISOString().slice(0, 10)
@@ -68,15 +71,18 @@ export function periodStart(period, today = new Date()) {
 // hist = { TICKER: series, SPY: series }, fx = { TICKER: USD per unit (today) }, prices = { TICKER: price now }.
 export function compareToSP(positions, { hist, fx = {}, prices = {}, start = null, today }) {
   const spy = hist && hist.SPY
-  const res = { invested: 0, you: 0, sp: 0, included: [], excluded: [], series: null }
+  const res = { invested: 0, you: 0, sp: 0, included: [], excluded: [], assumed: [], series: null }
   if (!spy || !spy.d.length) { res.error = 'S&P 500 prices unavailable'; return res }
   const spyNow = spy.c[spy.c.length - 1]
   const s0 = start ? firstOnOrAfter(spy, start) : null
   const events = []                      // for the chart: one entry per position
   for (const p of positions) {
     const t = p.ticker, series = hist[t], rate = fx[t] != null ? fx[t] : 1, now = prices[t] != null ? prices[t] : (series ? series.c[series.c.length - 1] : null)
-    const lots = lotsOf(p)
-    if (lots.some(l => !l.buyDate)) { res.excluded.push({ ticker: t, why: 'no purchase date' }); continue }
+    // no purchase date = bought before this year → counted as bought at the Dec 31 close (comparison only)
+    const ye = yearEnd(today), undated = lotsOf(p).some(l => !l.buyDate)
+    if (undated && (!series || priceOn(series, ye) == null)) { res.excluded.push({ ticker: t, why: 'no purchase date and no Dec 31 price' }); continue }
+    const lots = lotsOf(p).map(l => l.buyDate ? l : { ...l, buyDate: ye, buyPrice: priceOn(series, ye) })
+    if (undated) res.assumed.push(t)
     const soldQty = (p.sales || []).reduce((a, x) => a + x.qty, 0)
     if (Math.abs(lots.reduce((a, l) => a + l.orig, 0) - soldQty - (Number(p.qty) || 0)) > 1e-6) { res.excluded.push({ ticker: t, why: 'edited after a sale — purchase history incomplete' }); continue }
     if (start && !series) { res.excluded.push({ ticker: t, why: 'no price history' }); continue }
