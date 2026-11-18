@@ -606,7 +606,7 @@ function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, o
               <col style={{width:'105px'}} />
               <col style={{width:'105px'}} />
               <col style={{width:'115px'}} />
-              <col style={{width:'100px'}} />
+              <col style={{width:'200px'}} />
             </colgroup>
             <thead>
               <tr>
@@ -677,11 +677,11 @@ function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, o
                         : <span style={{color:'#475569'}}>—</span>}
                     </td>
                     <td style={tdStyle()}>
-                      <div style={{display:'flex',gap:'6px',justifyContent:'flex-end'}} className={`${rmAsk === r.ticker ? '' : 'md:opacity-0 md:group-hover:opacity-100'} transition-opacity`}>
+                      <div style={{display:'flex',gap:'5px',justifyContent:'flex-end',alignItems:'center',whiteSpace:'nowrap'}} className={`${rmAsk === r.ticker ? '' : 'md:opacity-0 md:group-hover:opacity-100'} transition-opacity`}>
                         {onAnalyze && (
                           <button onClick={() => onAnalyze(r.ticker)}
                             style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#38bdf8',border:'1px solid rgba(14,165,233,0.2)',padding:'2px 8px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>
-                            Analyze →
+                            Analyze
                           </button>
                         )}
                         {onSell && (
