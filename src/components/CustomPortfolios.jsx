@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { APPS_SCRIPT_URL, jsonp, isLocked, getOwnerKey, setOwnerKey } from '../lib/api'
 import { Plus, X, Edit2, Trash2, Check, TrendingUp, DollarSign, BarChart2, Search } from 'lucide-react'
 import { fmtMoney, fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
+import { recordSale, recordDividend, isClosed } from '../lib/portfolioMath'
+import { PortfolioSummary, PerformancePanel, AllocationPanel, SellModal, DividendModal, CashModal, ClosedPositions } from './PortfolioExtras'
 
 const QUOTE_CACHE = {}
 const QUOTE_TTL = 120000
@@ -73,12 +75,14 @@ export function mergeLot(old, add) {
 }
 // r = shares per old share (10 for a 10:1 split); only lots bought before the split change
 export function applySplitToPosition(p, split) {
-  const adj = l => (l.buyDate && l.buyDate >= split.date) ? l : { ...l, qty: l.qty * split.r, buyPrice: l.buyPrice / split.r }
-  if (p.lots && p.lots.length > 1) {
+  // purchases and sales before the split are restated in post-split shares (same money, r× the shares)
+  const adj = l => (l.buyDate && l.buyDate >= split.date) ? l : { ...l, qty: l.qty * split.r, buyPrice: l.buyPrice / split.r, ...(l.orig != null ? { orig: l.orig * split.r } : {}) }
+  const sales = p.sales ? p.sales.map(x => x.date >= split.date ? x : { ...x, qty: x.qty * split.r, price: x.price / split.r, cost: x.cost / split.r, heldBefore: x.heldBefore * split.r }) : undefined
+  if (p.lots && p.lots.length) {
     const lots = p.lots.map(adj), qty = lots.reduce((a, l) => a + l.qty, 0)
-    return { ...p, lots, qty, buyPrice: lots.reduce((a, l) => a + l.qty * l.buyPrice, 0) / qty, splitAdj: split.date }
+    return { ...p, lots, qty, buyPrice: qty > 0 ? lots.reduce((a, l) => a + l.qty * l.buyPrice, 0) / qty : p.buyPrice / split.r, splitAdj: split.date, ...(sales ? { sales } : {}) }
   }
-  return { ...p, ...adj({ qty: p.qty, buyPrice: p.buyPrice, buyDate: p.buyDate }), buyDate: p.buyDate, splitAdj: split.date }
+  return { ...p, ...adj({ qty: p.qty, buyPrice: p.buyPrice, buyDate: p.buyDate }), buyDate: p.buyDate, splitAdj: split.date, ...(sales ? { sales } : {}) }
 }
 
 // ── Quote fetcher ─────────────────────────────────────────────
@@ -181,13 +185,15 @@ function CreateModal({ onClose, onCreate }) {
 }
 
 // ── Add Position Modal ────────────────────────────────────────
-function AddPositionModal({ onClose, onAdd, initial }) {
+function AddPositionModal({ onClose, onAdd, initial, cash }) {
   const editing = !!initial
   const [ticker, setTicker] = useState(initial ? initial.ticker : '')
   const [buyPrice, setBuyPrice] = useState(initial ? String(initial.buyPrice) : '')
   const [qty, setQty] = useState(initial ? String(initial.qty) : '')
   const [buyDate, setBuyDate] = useState(initial && initial.buyDate ? initial.buyDate : '')
+  const [payCash, setPayCash] = useState(false)
   const [error, setError] = useState('')
+  const usTicker = !/\.[A-Z]{1,3}$/.test(ticker.trim().toUpperCase())
   const today = new Date().toISOString().slice(0, 10)
   const year = new Date().getFullYear()
 
@@ -201,6 +207,7 @@ function AddPositionModal({ onClose, onAdd, initial }) {
     if (buyDate && buyDate > today) return setError('Purchase date cannot be in the future')
     const pos = { ticker: t, buyPrice: p, qty: q, addedAt: initial ? (initial.addedAt || Date.now()) : Date.now() }
     if (buyDate) pos.buyDate = buyDate
+    if (!editing && payCash && usTicker) pos.payFromCash = q * p
     onAdd(pos)
     onClose()
   }
@@ -237,8 +244,16 @@ function AddPositionModal({ onClose, onAdd, initial }) {
             <label className="block text-[11px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Purchase date (optional)</label>
             <input value={buyDate} onChange={e => { setBuyDate(e.target.value); setError('') }} type="date" max={today}
               className="w-full bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[13px] font-mono text-slate-200 focus:outline-none focus:border-electric-500/40" />
-            <div className="text-[10px] font-mono text-slate-600 mt-1">Used for YTD P&amp;L. Leave empty if you bought before {year}.</div>
+            <div className="text-[10px] font-mono text-slate-600 mt-1">Used for YTD P&amp;L and the S&amp;P 500 comparison. Leave empty if you don't know it.</div>
           </div>
+          {!editing && cash > 0 && usTicker && (
+            <label className="flex items-center gap-2 text-[12px] font-mono text-slate-400 cursor-pointer">
+              <input type="checkbox" checked={payCash} onChange={e => setPayCash(e.target.checked)} /> Pay from this portfolio's cash (${Math.round(cash).toLocaleString('en-US')} available)
+            </label>
+          )}
+          {editing && initial.sales && initial.sales.length > 0 && (
+            <div className="text-[10px] font-mono text-terminal-amber">This position has recorded sales. Changing the quantity or price replaces its purchase history — the sales stay recorded, but it is left out of the S&amp;P 500 comparison.</div>
+          )}
           {error && <div className="text-[11px] font-mono text-terminal-red">{error}</div>}
         </div>
         <div className="flex gap-3 mt-5">
@@ -288,9 +303,12 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
   const [addTicker, setAddTicker] = useState('')
   const [adding, setAdding]       = useState(false)
   const [sort, setSort]           = useState({ key: null, dir: 'desc' })
+  const [sellPos, setSellPos]     = useState(null)
+  const [divPos, setDivPos]       = useState(null)
+  const [cashEdit, setCashEdit]   = useState(false)
 
   useEffect(() => {
-    const missing = positions.filter(p => !quotes[p.ticker])
+    const missing = allPositions.filter(p => !quotes[p.ticker])
     if (!missing.length) return
     setLoading(new Set(missing.map(p => p.ticker)))
     fetchQuotes(missing.map(p => p.ticker)).then(map => {
@@ -428,23 +446,28 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
 }
 
 // ── Investment Table ──────────────────────────────────────────
-function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
+function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, onAnalyze, cash = 0, onSell, onDividend, onSetCash, isMobile }) {
+  const positions = allPositions.filter(p => !isClosed(p))
+  const closed = allPositions.filter(isClosed)
   const [rmAsk, setRmAsk]         = useState(null)                // remove needs a second tap ("Remove?")
   const [quotes, setQuotes]       = useState({})
   const [loading, setLoading]     = useState(new Set())
   const [showModal, setShowModal] = useState(false)
   const [editPos, setEditPos]     = useState(null)
   const [sort, setSort]           = useState({ key: null, dir: 'desc' })
+  const [sellPos, setSellPos]     = useState(null)
+  const [divPos, setDivPos]       = useState(null)
+  const [cashEdit, setCashEdit]   = useState(false)
 
   useEffect(() => {
-    const missing = positions.filter(p => !quotes[p.ticker])
+    const missing = allPositions.filter(p => !quotes[p.ticker])
     if (!missing.length) return
     setLoading(new Set(missing.map(p => p.ticker)))
     fetchQuotes(missing.map(p => p.ticker)).then(map => {
       setQuotes(prev => ({ ...prev, ...map }))
       setLoading(new Set())
     })
-  }, [positions.map(p => p.ticker).join(',')])
+  }, [allPositions.map(p => p.ticker).join(',')])
   useEffect(() => {
     const id = setInterval(() => {
       if (document.visibilityState !== 'visible' || !positions.length) return
@@ -454,6 +477,9 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
   }, [positions.map(p => p.ticker).join(',')])
 
   const handleSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' })
+  const fxOf = t => { const q = quotes[t]; return !q || (q.currency || 'USD') === 'USD' ? 1 : (q.fxToUsd ?? 1) }
+  const sectors = Object.fromEntries(allPositions.map(p => [p.ticker, quotes[p.ticker]?.sector || null]))
+  const dated = allPositions.some(p => (p.lots && p.lots.length ? p.lots : [p]).every(l => l.buyDate))
 
   // Compute rows with derived values
   const rows = positions.map(p => {
@@ -472,7 +498,7 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
     // YTD start price: your buy price if bought this year, otherwise the last close of the previous year.
     // No Dec 31 price (listed this year, or a data gap) and no 2026 purchase date → no YTD, never a guess.
     // Several purchases (lots): each lot starts from its own buy price if bought this year, else from the Dec 31 close
-    const lots           = p.lots && p.lots.length > 1 ? p.lots : [{ qty: p.qty, buyPrice: p.buyPrice, buyDate: p.buyDate }]
+    const lots           = p.lots && p.lots.length ? p.lots.filter(l => l.qty > 0) : [{ qty: p.qty, buyPrice: p.buyPrice, buyDate: p.buyDate }]
     const thisYear       = l => !!(l.buyDate && Number(String(l.buyDate).slice(0, 4)) === YEAR)
     const boughtThisYear = lots.every(thisYear)
     const noYearEnd      = !!(q && q.price != null && q.ytdBase == null)
@@ -549,6 +575,14 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
           {noRate.length > 0 && <span className="text-terminal-amber">No exchange rate right now for {noRate.join(', ')} — left out of the totals. </span>}
           {pendingCount > 0 && <>{pendingCount} position{pendingCount === 1 ? '' : 's'} still loading — not yet in the totals.</>}
         </div>
+      )}
+
+      {(positions.length > 0 || closed.length > 0 || cash > 0) && (
+        <PortfolioSummary rows={rows} positions={allPositions} cash={cash} onEditCash={() => setCashEdit(true)} />
+      )}
+      {dated && <PerformancePanel positions={allPositions} rows={rows} isMobile={isMobile} />}
+      {!dated && allPositions.length > 0 && (
+        <div className="text-[11px] font-mono text-slate-500">Add purchase dates (✎) to compare your picks with the S&amp;P 500.</div>
       )}
 
       {positions.length === 0 ? (
@@ -650,6 +684,14 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                             Analyze →
                           </button>
                         )}
+                        {onSell && (
+                          <button onClick={() => setSellPos(positions.find(p => p.ticker === r.ticker))} title="Record a sale" aria-label={`Sell ${r.ticker}`}
+                            style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#cbd5e1',border:'1px solid rgba(148,163,184,0.25)',padding:'2px 6px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>Sell</button>
+                        )}
+                        {onDividend && (
+                          <button onClick={() => setDivPos(positions.find(p => p.ticker === r.ticker))} title="Record a dividend" aria-label={`Dividend ${r.ticker}`}
+                            style={{fontSize:'10px',fontFamily:'IBM Plex Mono',color:'#cbd5e1',border:'1px solid rgba(148,163,184,0.25)',padding:'2px 6px',borderRadius:'4px',background:'transparent',cursor:'pointer'}}>Div</button>
+                        )}
                         {onUpdate && (
                           <button onClick={() => setEditPos(positions.find(p => p.ticker === r.ticker))} title="Edit quantity, buy price or purchase date" aria-label={`Edit ${r.ticker}`}
                             style={{color:'#64748b',background:'transparent',border:'none',cursor:'pointer',fontSize:'13px'}}>✎</button>
@@ -671,7 +713,7 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                 <tr style={{borderTop:'2px solid rgba(14,165,233,0.2)',background:'rgba(14,165,233,0.03)'}}>
                   <td style={{...tdStyle('center'), color:'#475569', fontSize:'11px', padding:'12px'}}></td>
                   <td colSpan={4} style={{padding:'12px',fontFamily:'IBM Plex Mono,monospace',fontSize:'11px',textTransform:'uppercase',letterSpacing:'0.1em',color:'#475569'}}>
-                    Total ({positions.length} positions)
+                    Total ({positions.length} positions{cash > 0 ? ', without cash' : ''})
                   </td>
                   <td style={{padding:'12px',textAlign:'right',fontFamily:'IBM Plex Mono,monospace',fontWeight:'700',fontSize:'13px',color:'#94a3b8'}}>
                     {fmtPrice(totals.cost)}
@@ -694,11 +736,29 @@ function InvestmentTable({ positions, onRemove, onAdd, onUpdate, onAnalyze }) {
                   <td colSpan={2}></td>
                 </tr>
               )}
+              {onSetCash && (
+                <tr data-testid="cash-row">
+                  <td style={{...tdStyle('center'), color:'#334155', fontSize:'11px'}}></td>
+                  <td colSpan={5} style={{...tdStyle('left'), color:'#94a3b8'}}>Cash <span style={{color:'#475569',fontSize:'10px'}}>(not invested)</span></td>
+                  <td style={tdStyle()}><span style={{fontWeight:'600',color:'#f1f5f9'}}>{fmtPrice(cash || 0)}</span></td>
+                  <td colSpan={5} style={tdStyle('left')}>
+                    <button onClick={() => setCashEdit(true)} aria-label="Edit cash" style={{color:'#64748b',background:'transparent',border:'none',cursor:'pointer',fontSize:'13px'}}>✎</button>
+                  </td>
+                  <td></td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       )}
-      {showModal && <AddPositionModal onClose={() => setShowModal(false)} onAdd={(pos) => { onAdd(pos); setShowModal(false) }} />}
+      {positions.length > 0 && <AllocationPanel rows={rows} cash={cash} sectors={sectors} />}
+      <ClosedPositions positions={closed} fxOf={fxOf} onRemove={onRemove} />
+      {showModal && <AddPositionModal cash={cash} onClose={() => setShowModal(false)} onAdd={(pos) => { onAdd(pos); setShowModal(false) }} />}
+      {sellPos && <SellModal position={sellPos} price={quotes[sellPos.ticker]?.price} cur={quotes[sellPos.ticker]?.currency} fx={fxOf(sellPos.ticker)}
+        onClose={() => setSellPos(null)} onSave={(sale) => { onSell(sellPos.ticker, { ...sale, cashAdd: sale.toCash ? sale.qty * sale.price * fxOf(sellPos.ticker) : 0 }); setSellPos(null) }} />}
+      {divPos && <DividendModal position={divPos} cur={quotes[divPos.ticker]?.currency} fx={fxOf(divPos.ticker)}
+        onClose={() => setDivPos(null)} onSave={(d) => { onDividend(divPos.ticker, { ...d, cashAdd: d.toCash ? d.amount * fxOf(divPos.ticker) : 0 }); setDivPos(null) }} />}
+      {cashEdit && <CashModal cash={cash} onClose={() => setCashEdit(false)} onSave={(n) => { onSetCash(n); setCashEdit(false) }} />}
       {editPos && <AddPositionModal initial={editPos} onClose={() => setEditPos(null)} onAdd={(pos) => {
         const due = rows.find(x => x.ticker === pos.ticker)?.splitDue
         const changed = Number(pos.qty) !== Number(editPos.qty) || Math.abs(Number(pos.buyPrice) - Number(editPos.buyPrice)) > 1e-9
@@ -955,14 +1015,28 @@ export default function CustomPortfolios({ onAnalyze }) {
     ))
   }
   // Adding a ticker you already hold = another purchase: merged into one position (average cost), lots kept for YTD
-  const handleAddInvestment = (position) => {
+  const handleAddInvestment = (raw) => {
+    const { payFromCash, ...position } = raw
     persistPortfolios(portfolios.map(p => {
       if (p.id !== activeId) return p
+      const cash = payFromCash ? (p.cash || 0) - payFromCash : p.cash
       const old = p.positions.find(pos => pos.ticker === position.ticker)
-      if (!old) return { ...p, positions: [...p.positions, position] }
-      return { ...p, positions: p.positions.map(pos => pos === old ? mergeLot(old, position) : pos) }
+      if (!old) return { ...p, cash, positions: [...p.positions, position] }
+      return { ...p, cash, positions: p.positions.map(pos => pos === old ? mergeLot(old, position) : pos) }
     }))
   }
+  // a sale / dividend: the check runs first (it throws with a plain reason, shown in the form) — nothing is saved on an error
+  const handleSell = (ticker, sale) => {
+    const p = portfolios.find(x => x.id === activeId), pos = p && p.positions.find(x => x.ticker === ticker)
+    const next = recordSale(pos, sale)
+    persistPortfolios(portfolios.map(x => x.id !== activeId ? x : { ...x, cash: (x.cash || 0) + (sale.cashAdd || 0), positions: x.positions.map(y => y.ticker === ticker ? next : y) }))
+  }
+  const handleDividend = (ticker, d) => {
+    const p = portfolios.find(x => x.id === activeId), pos = p && p.positions.find(x => x.ticker === ticker)
+    const next = recordDividend(pos, d)
+    persistPortfolios(portfolios.map(x => x.id !== activeId ? x : { ...x, cash: (x.cash || 0) + (d.cashAdd || 0), positions: x.positions.map(y => y.ticker === ticker ? next : y) }))
+  }
+  const handleSetCash = (n) => persistPortfolios(portfolios.map(x => x.id === activeId ? { ...x, cash: n } : x))
   const handleUpdateInvestment = (position) => {
     persistPortfolios(portfolios.map(p =>
       p.id === activeId ? { ...p, positions: p.positions.map(pos => pos.ticker !== position.ticker ? pos : updatePosition(pos, position)) } : p
@@ -1091,11 +1165,12 @@ export default function CustomPortfolios({ onAnalyze }) {
             }`}>
               {active.type === 'investment' ? '💰 Investment' : '👁 Tracking'}
             </span>
-            <span className="font-mono text-[11px] text-slate-600">{active.positions.length} position{active.positions.length !== 1 ? 's' : ''}</span>
+            <span className="font-mono text-[11px] text-slate-600">{active.positions.filter(p => !isClosed(p)).length} position{active.positions.filter(p => !isClosed(p)).length !== 1 ? 's' : ''}</span>
           </div>
           {active.type === 'tracking'
             ? <TrackingTable positions={active.positions} onRemove={handleRemove} onAdd={handleAddTracking} onAnalyze={onAnalyze} />
-            : <InvestmentTable positions={active.positions} onRemove={handleRemove} onAdd={handleAddInvestment} onUpdate={handleUpdateInvestment} onAnalyze={onAnalyze} />
+            : <InvestmentTable positions={active.positions} onRemove={handleRemove} onAdd={handleAddInvestment} onUpdate={handleUpdateInvestment} onAnalyze={onAnalyze}
+                cash={active.cash || 0} onSell={handleSell} onDividend={handleDividend} onSetCash={handleSetCash} />
           }
         </div>
       )}
