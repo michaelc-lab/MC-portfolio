@@ -244,7 +244,7 @@ function AddPositionModal({ onClose, onAdd, initial, cash }) {
             <label className="block text-[11px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Purchase date (optional)</label>
             <input value={buyDate} onChange={e => { setBuyDate(e.target.value); setError('') }} type="date" max={today}
               className="w-full bg-navy-800/60 border border-white/10 rounded px-3 py-2 text-[13px] font-mono text-slate-200 focus:outline-none focus:border-electric-500/40" />
-            <div className="text-[10px] font-mono text-slate-600 mt-1">Used for YTD P&amp;L and the S&amp;P 500 comparison. Leave empty if you don't know it.</div>
+            <div className="text-[10px] font-mono text-slate-600 mt-1">Leave empty if you bought before {year} — it is then counted from the Dec 31 close.</div>
           </div>
           {!editing && cash > 0 && usTicker && (
             <label className="flex items-center gap-2 text-[12px] font-mono text-slate-400 cursor-pointer">
@@ -479,7 +479,6 @@ function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, o
   const handleSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' })
   const fxOf = t => { const q = quotes[t]; return !q || (q.currency || 'USD') === 'USD' ? 1 : (q.fxToUsd ?? 1) }
   const sectors = Object.fromEntries(allPositions.map(p => [p.ticker, quotes[p.ticker]?.sector || null]))
-  const dated = allPositions.some(p => (p.lots && p.lots.length ? p.lots : [p]).every(l => l.buyDate))
 
   // Compute rows with derived values
   const rows = positions.map(p => {
@@ -580,10 +579,7 @@ function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, o
       {(positions.length > 0 || closed.length > 0 || cash > 0) && (
         <PortfolioSummary rows={rows} positions={allPositions} cash={cash} onEditCash={() => setCashEdit(true)} />
       )}
-      {dated && <PerformancePanel positions={allPositions} rows={rows} isMobile={isMobile} />}
-      {!dated && allPositions.length > 0 && (
-        <div className="text-[11px] font-mono text-slate-500">Add purchase dates (✎) to compare your picks with the S&amp;P 500.</div>
-      )}
+      {allPositions.length > 0 && <PerformancePanel positions={allPositions} rows={rows} isMobile={isMobile} />}
 
       {positions.length === 0 ? (
         <div className="panel p-12 text-center">

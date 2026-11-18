@@ -4,7 +4,7 @@ import { X } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { APPS_SCRIPT_URL, jsonp } from '../lib/api'
 import { fmtPrice, fmtPct, fmtMoney } from '../lib/utils'
-import { compareToSP, periodStart, allocation, lotsOf, realizedOf, dividendsOf } from '../lib/portfolioMath'
+import { compareToSP, periodStart, allocation, lotsOf, realizedOf, dividendsOf, yearEnd } from '../lib/portfolioMath'
 
 const today = () => new Date().toISOString().slice(0, 10)
 export const moneyExact = v => v == null ? '—' : (v >= 0 ? '+' : '−') + '$' + Math.round(Math.abs(v)).toLocaleString('en-US')
@@ -67,9 +67,10 @@ export function PerformancePanel({ positions, rows, isMobile }) {
   const [period, setPeriod] = useState('YTD')
   const [state, setState] = useState({ loading: true })
   const tickers = positions.map(p => p.ticker)
-  const earliest = positions.flatMap(p => lotsOf(p).map(l => l.buyDate)).filter(Boolean).sort()[0]
+  // undated purchases count from the Dec 31 close, so that day is always fetched
+  const earliest = positions.flatMap(p => lotsOf(p).map(l => l.buyDate || yearEnd(today()))).sort()[0]
   const start = periodStart(period)
-  const from = (period === 'ALL' ? earliest : start) || start || today()
+  const from = [period === 'ALL' ? earliest : start, positions.some(p => lotsOf(p).some(l => !l.buyDate)) ? yearEnd(today()) : null].filter(Boolean).sort()[0] || today()
   const key = tickers.join(',') + '|' + from
   useEffect(() => {
     let alive = true
@@ -127,6 +128,7 @@ export function PerformancePanel({ positions, rows, isMobile }) {
           <div className="mt-2 text-[10px] font-mono text-slate-600 leading-relaxed" data-testid="perf-note">
             Profit in dollars, price change only (dividends are counted separately above). Each purchase is matched by buying the S&amp;P 500 with the same money on the same day; each sale sells the same share of it.
             {period !== 'ALL' && ' What you already held at the start of the period counts as bought on that day.'}
+            {res.assumed.length > 0 && <span> No purchase date, so counted as bought at the Dec 31 close: {res.assumed.join(', ')}.</span>}
             {res.excluded.length > 0 && <span className="text-terminal-amber"> Left out: {res.excluded.map(x => `${x.ticker} (${x.why})`).join(', ')}.</span>}
             {state.missing && state.missing.length > 0 && <span className="text-terminal-amber"> No price history for {state.missing.join(', ')}.</span>}
           </div>
