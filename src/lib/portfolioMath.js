@@ -71,18 +71,22 @@ export function periodStart(period, today = new Date()) {
 // hist = { TICKER: series, SPY: series }, fx = { TICKER: USD per unit (today) }, prices = { TICKER: price now }.
 export function compareToSP(positions, { hist, fx = {}, prices = {}, start = null, today }) {
   const spy = hist && hist.SPY
-  const res = { invested: 0, you: 0, sp: 0, included: [], excluded: [], assumed: [], series: null }
+  const res = { invested: 0, you: 0, sp: 0, included: [], excluded: [], assumed: [], listedLater: [], series: null }
   if (!spy || !spy.d.length) { res.error = 'S&P 500 prices unavailable'; return res }
-  const spyNow = spy.c[spy.c.length - 1]
+  // today's live SPY price when we have it — your stocks are valued at live prices, so the S&P must be too
+  const spyNow = prices.SPY != null ? prices.SPY : spy.c[spy.c.length - 1]
   const s0 = start ? firstOnOrAfter(spy, start) : null
   const events = []                      // for the chart: one entry per position
   for (const p of positions) {
     const t = p.ticker, series = hist[t], rate = fx[t] != null ? fx[t] : 1, now = prices[t] != null ? prices[t] : (series ? series.c[series.c.length - 1] : null)
     // no purchase date = bought before this year → counted as bought at the Dec 31 close (comparison only)
-    const ye = yearEnd(today), undated = lotsOf(p).some(l => !l.buyDate)
-    if (undated && (!series || priceOn(series, ye) == null)) { res.excluded.push({ ticker: t, why: 'no purchase date and no Dec 31 price' }); continue }
+    // a stock that started trading after Dec 31 (a spin-off or new listing) counts from its first close
+    let ye = yearEnd(today)
+    const undated = lotsOf(p).some(l => !l.buyDate)
+    if (undated && series && series.d.length && priceOn(series, ye) == null && series.d[0] > ye) { ye = series.d[0]; res.listedLater.push({ ticker: t, date: ye }) }
+    if (undated && (!series || priceOn(series, ye) == null)) { res.excluded.push({ ticker: t, why: series ? 'no purchase date and no Dec 31 price' : 'no purchase date and no price history' }); continue }
     const lots = lotsOf(p).map(l => l.buyDate ? l : { ...l, buyDate: ye, buyPrice: priceOn(series, ye) })
-    if (undated) res.assumed.push(t)
+    if (undated && !res.listedLater.some(x => x.ticker === t)) res.assumed.push(t)
     const soldQty = (p.sales || []).reduce((a, x) => a + x.qty, 0)
     if (Math.abs(lots.reduce((a, l) => a + l.orig, 0) - soldQty - (Number(p.qty) || 0)) > 1e-6) { res.excluded.push({ ticker: t, why: 'edited after a sale — purchase history incomplete' }); continue }
     if (start && !series) { res.excluded.push({ ticker: t, why: 'no price history' }); continue }
@@ -135,6 +139,9 @@ export function compareToSP(positions, { hist, fx = {}, prices = {}, start = nul
   res.spPct = res.invested > 0 ? res.sp / res.invested * 100 : null
   res.diff = res.you - res.sp
   res.series = gainSeries(events, spy, s0, today)
+  // the chart's last point = the numbers above (today's live prices), so the line ends where the totals say
+  if (res.series.length && today && today > res.series[res.series.length - 1].date && res.invested > 0)
+    res.series.push({ date: today, you: Math.round(res.you), sp: Math.round(res.sp), invested: Math.round(res.invested), live: true })
   return res
 }
 
@@ -181,3 +188,32 @@ export function allocation(rows, cash = 0) {
   const big = stocks.find(s => !s.cash && s.pct > 20)
   return { total, stocks, sectors, warn: big ? `${big.name} is ${big.pct.toFixed(0)}% of this portfolio — a big bet on one stock` : null }
 }
+
+// ── Dividends, calculated automatically (gross) ───────────────
+// divs = { TICKER: [{ d: ex-dividend date, a: $ per share in today's shares }] }.
+// You get a dividend if you held the shares at the START of the ex-dividend day: bought before it, not sold before it.
+// A purchase with no date counts as held since the Dec 31 close (so it gets this year's dividends only).
+export function sharesOn(p, exDate, today) {
+  const ye = yearEnd(today)
+  const bought = lotsOf(p).reduce((a, l) => a + ((l.buyDate || ye) < exDate ? Number(l.orig) || 0 : 0), 0)
+  const sold = (p.sales || []).reduce((a, s) => a + (s.date < exDate ? Number(s.qty) || 0 : 0), 0)
+  return Math.max(0, round(bought - sold, 6))
+}
+export function autoDividends(positions, divs, { today, missing = [] } = {}) {
+  const byStock = []
+  let total = 0
+  for (const p of positions) {
+    const list = (divs && divs[p.ticker]) || []
+    const pays = list.filter(x => !today || x.d <= today)
+      .map(x => { const sh = sharesOn(p, x.d, today); return { date: x.d, perShare: x.a, shares: sh, amount: sh * x.a } })
+      .filter(x => x.shares > 0)
+    const amount = pays.reduce((a, x) => a + x.amount, 0)
+    if (amount > 0) { byStock.push({ ticker: p.ticker, amount, pays }); total += amount }
+  }
+  byStock.sort((a, b) => b.amount - a.amount)
+  const held = new Set(positions.map(p => p.ticker))
+  return { total, byStock, unavailable: missing.filter(t => held.has(t)) }
+}
+// the earliest date dividends are needed from (the first purchase; undated = the Dec 31 close)
+export const dividendsFrom = (positions, today) =>
+  positions.flatMap(p => lotsOf(p).map(l => l.buyDate || yearEnd(today))).sort()[0] || yearEnd(today)
