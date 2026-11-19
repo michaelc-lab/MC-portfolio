@@ -1166,7 +1166,7 @@ export default function CustomPortfolios({ onAnalyze }) {
           {active.type === 'tracking'
             ? <TrackingTable positions={active.positions} onRemove={handleRemove} onAdd={handleAddTracking} onAnalyze={onAnalyze} />
             : <InvestmentTable positions={active.positions} onRemove={handleRemove} onAdd={handleAddInvestment} onUpdate={handleUpdateInvestment} onAnalyze={onAnalyze}
-                cash={active.cash || 0} onSell={handleSell} onDividend={handleDividend} onSetCash={handleSetCash} />
+                cash={active.cash || 0} onSell={handleSell} onSetCash={handleSetCash} />
           }
         </div>
       )}

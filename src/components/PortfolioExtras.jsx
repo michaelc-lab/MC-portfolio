@@ -4,7 +4,7 @@ import { X } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { APPS_SCRIPT_URL, jsonp } from '../lib/api'
 import { fmtPrice, fmtPct, fmtMoney } from '../lib/utils'
-import { compareToSP, periodStart, allocation, lotsOf, realizedOf, dividendsOf, yearEnd } from '../lib/portfolioMath'
+import { compareToSP, periodStart, allocation, lotsOf, realizedOf, yearEnd, autoDividends, dividendsFrom } from '../lib/portfolioMath'
 
 const today = () => new Date().toISOString().slice(0, 10)
 export const moneyExact = v => v == null ? '—' : (v >= 0 ? '+' : '−') + '$' + Math.round(Math.abs(v)).toLocaleString('en-US')
@@ -30,19 +30,54 @@ export async function fetchHistory(tickers, from, send = jsonp) {
 }
 export function resetHistoryCache() { Object.keys(HIST).forEach(k => delete HIST[k]) }
 
+// ── Dividends (automatic, gross) — one request per 40 stocks, kept for this visit ──
+const DIVS = {}
+export async function fetchDividends(tickers, from, send = jsonp) {
+  const want = [...new Set(tickers)], out = {}, need = [], missing = [], why = {}
+  want.forEach(t => { const h = DIVS[t]; if (h && h.from <= from) out[t] = h.list.filter(x => x.d >= from); else need.push(t) })
+  for (let i = 0; i < need.length; i += 40) {
+    const chunk = need.slice(i, i + 40)
+    const r = await send(`${APPS_SCRIPT_URL}?action=getDividends&tickers=${encodeURIComponent(chunk.join(','))}&from=${from}`, { timeout: 45000, retryTimeout: 60000 })
+    if (!r || r.error) throw new Error((r && r.error) || 'Dividend data unavailable')
+    Object.entries(r.divs || {}).forEach(([t, list]) => { DIVS[t] = { from: r.from || from, list }; out[t] = list })
+    missing.push(...(r.missing || [])); Object.assign(why, r.why || {})
+  }
+  return { divs: out, missing, why }
+}
+export function resetDividendCache() { Object.keys(DIVS).forEach(k => delete DIVS[k]) }
+
+function useAutoDividends(positions) {
+  const [st, setSt] = useState({ loading: true })
+  const tickers = positions.map(p => p.ticker)
+  const from = dividendsFrom(positions, today())
+  const key = tickers.join(',') + '|' + from
+  useEffect(() => {
+    let alive = true
+    if (!tickers.length) { setSt({ loading: false, divs: {}, missing: [] }); return }
+    setSt(s => ({ ...s, loading: true }))
+    fetchDividends(tickers, from).then(r => alive && setSt({ loading: false, ...r })).catch(e => alive && setSt({ loading: false, error: e.message }))
+    return () => { alive = false }
+  }, [key])
+  const res = useMemo(() => st.divs ? autoDividends(positions, st.divs, { today: today(), missing: st.missing || [] }) : null, [st.divs, positions])
+  return { ...st, res }
+}
+
 // ── Summary cards ──
 export function PortfolioSummary({ rows, positions, cash, onEditCash }) {
   const open = rows.filter(r => r.value != null)
   const stocks = open.reduce((a, r) => a + r.value, 0), cost = open.reduce((a, r) => a + r.cost, 0)
   const fxOf = t => (rows.find(r => r.ticker === t) || {}).fx ?? 1
   const realized = positions.reduce((a, p) => a + realizedOf(p) * fxOf(p.ticker), 0)
-  const divs = positions.reduce((a, p) => a + dividendsOf(p) * fxOf(p.ticker), 0)
+  const dv = useAutoDividends(positions)
+  const divs = dv.res ? dv.res.total : null
+  const [showDivs, setShowDivs] = useState(false)
   const Card = ({ title, children, testid }) => (
     <div className="panel px-4 py-3 min-w-[170px] flex-1" data-testid={testid}>
       <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-slate-500 mb-1">{title}</div>
       {children}
     </div>
   )
+  const divText = dv.loading ? '…' : dv.error ? 'unavailable' : moneyExact(divs || 0)
   return (
     <div className="flex gap-3 flex-wrap">
       <Card title="Total value" testid="sum-total">
@@ -54,9 +89,57 @@ export function PortfolioSummary({ rows, positions, cash, onEditCash }) {
         <div className="font-mono text-[11px] text-slate-500">{cost > 0 ? fmtPct((stocks - cost) / cost * 100) : '—'} on what you still hold</div>
       </Card>
       <Card title="Taken out" testid="sum-realized">
-        <div className="font-mono text-[18px] font-semibold" style={{ color: pnlColor(realized + divs) }}>{moneyExact(realized + divs)}</div>
-        <div className="font-mono text-[11px] text-slate-500">sales {moneyExact(realized)} · dividends {moneyExact(divs)}</div>
+        <div className="font-mono text-[18px] font-semibold" style={{ color: pnlColor(realized + (divs || 0)) }}>{moneyExact(realized + (divs || 0))}</div>
+        <div className="font-mono text-[11px] text-slate-500">sales {moneyExact(realized)} · <button data-testid="div-open" onClick={() => dv.res && setShowDivs(true)} disabled={!dv.res}
+          className="text-electric-400 hover:text-electric-300 disabled:text-slate-500" title="See dividends by company">dividends {divText} ▸</button></div>
       </Card>
+      {showDivs && dv.res && <DividendBreakdown res={dv.res} why={dv.why || {}} onClose={() => setShowDivs(false)} />}
+    </div>
+  )
+}
+
+// ── Dividends by company (tap the dividends figure) ──
+export function DividendBreakdown({ res, why, onClose }) {
+  const [openT, setOpenT] = useState(null)
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="panel-bright w-full max-w-md mx-4 p-6 animate-slide-up max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()} data-testid="div-breakdown">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="font-display font-bold text-[16px] text-white">Dividends received</h2>
+          <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-slate-300"><X size={18} /></button>
+        </div>
+        <div className="text-[11px] font-mono text-slate-500 mb-4">Gross, before tax · calculated automatically</div>
+        {res.byStock.length === 0 && <div className="py-6 text-center font-mono text-[12px] text-slate-500">No dividends in this period.</div>}
+        <div className="space-y-0.5">
+          {res.byStock.map(s => (
+            <div key={s.ticker}>
+              <button onClick={() => setOpenT(openT === s.ticker ? null : s.ticker)} className="w-full flex items-center gap-3 py-1.5 font-mono text-[13px] hover:bg-white/5 rounded px-1" data-testid={'div-row-' + s.ticker}>
+                <span className="w-16 text-left text-sky-300 font-semibold">{s.ticker}</span>
+                <span className="flex-1 text-left text-[11px] text-slate-500">{s.pays.length} payment{s.pays.length === 1 ? '' : 's'}</span>
+                <span className="text-slate-100">${s.amount.toFixed(2)}</span>
+              </button>
+              {openT === s.ticker && (
+                <div className="pl-[76px] pb-2 space-y-0.5">
+                  {s.pays.map(x => (
+                    <div key={x.date} className="flex justify-between font-mono text-[11px] text-slate-500">
+                      <span>{x.date} · {x.shares} × ${x.perShare.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}</span><span>${x.amount.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {res.byStock.length > 0 && (
+          <div className="flex items-center gap-3 pt-2 mt-2 border-t border-white/10 font-mono text-[13px] px-1">
+            <span className="flex-1 text-slate-400">Total</span><span className="text-terminal-green font-semibold" data-testid="div-total">${res.total.toFixed(2)}</span>
+          </div>
+        )}
+        <div className="text-[10px] font-mono text-slate-600 mt-4 leading-relaxed">
+          Counted on the shares you held on each ex-dividend date. A purchase with no date counts from Dec 31, so it gets this year's dividends only. Your broker may show a lower amount after tax.
+          {res.unavailable.length > 0 && <span className="text-terminal-amber"> Not included: {res.unavailable.map(t => `${t}${why[t] ? ' (' + why[t] + ')' : ''}`).join(', ')}.</span>}
+        </div>
+      </div>
     </div>
   )
 }
@@ -75,15 +158,18 @@ export function PerformancePanel({ positions, rows, isMobile }) {
   useEffect(() => {
     let alive = true
     setState(s => ({ ...s, loading: true, error: null }))
-    fetchHistory([...tickers, 'SPY'], from).then(r => alive && setState({ loading: false, ...r })).catch(e => alive && setState({ loading: false, error: e.message }))
+    // SPY's live price too (the history ends at yesterday's close; your stocks use live prices)
+    const live = jsonp(`${APPS_SCRIPT_URL}?action=getQuotes&tickers=SPY`).then(q => q && q.quotes && q.quotes.SPY && q.quotes.SPY.price).catch(() => null)
+    Promise.all([fetchHistory([...tickers, 'SPY'], from), live]).then(([r, spyNow]) => alive && setState({ loading: false, ...r, spyNow })).catch(e => alive && setState({ loading: false, error: e.message }))
     return () => { alive = false }
   }, [key])
   const res = useMemo(() => {
     if (!state.hist) return null
     const fx = {}, prices = {}
     rows.forEach(r => { if (r.fx != null) fx[r.ticker] = r.fx; if (r.currentPrice != null) prices[r.ticker] = r.currentPrice })
+    if (state.spyNow > 0) prices.SPY = state.spyNow
     return compareToSP(positions, { hist: state.hist, fx, prices, start: period === 'ALL' ? null : start, today: today() })
-  }, [state.hist, period, rows.map(r => r.currentPrice).join(','), positions])
+  }, [state.hist, state.spyNow, period, rows.map(r => r.currentPrice).join(','), positions])
   const ahead = res && res.invested > 0 ? res.diff >= 0 : null
   return (
     <div className="panel p-4" data-testid="perf-panel">
@@ -129,6 +215,7 @@ export function PerformancePanel({ positions, rows, isMobile }) {
             Profit in dollars, price change only (dividends are counted separately above). Each purchase is matched by buying the S&amp;P 500 with the same money on the same day; each sale sells the same share of it.
             {period !== 'ALL' && ' What you already held at the start of the period counts as bought on that day.'}
             {res.assumed.length > 0 && <span> No purchase date, so counted as bought at the Dec 31 close: {res.assumed.join(', ')}.</span>}
+            {res.listedLater.length > 0 && <span> Started trading this year, so counted from its first close: {res.listedLater.map(x => `${x.ticker} (${x.date})`).join(', ')}.</span>}
             {res.excluded.length > 0 && <span className="text-terminal-amber"> Left out: {res.excluded.map(x => `${x.ticker} (${x.why})`).join(', ')}.</span>}
             {state.missing && state.missing.length > 0 && <span className="text-terminal-amber"> No price history for {state.missing.join(', ')}.</span>}
           </div>
@@ -253,7 +340,7 @@ export function CashModal({ cash, onClose, onSave }) {
 export function ClosedPositions({ positions, fxOf, onRemove }) {
   const [open, setOpen] = useState(false)
   if (!positions.length) return null
-  const total = positions.reduce((a, p) => a + (realizedOf(p) + dividendsOf(p)) * fxOf(p.ticker), 0)
+  const total = positions.reduce((a, p) => a + realizedOf(p) * fxOf(p.ticker), 0)
   return (
     <div className="panel p-4" data-testid="closed-panel">
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between font-mono text-[12px] text-slate-400">
@@ -263,13 +350,12 @@ export function ClosedPositions({ positions, fxOf, onRemove }) {
       {open && (
         <div className="mt-3 space-y-1.5">
           {positions.map(p => {
-            const sales = p.sales || [], last = sales[sales.length - 1], r = realizedOf(p) * fxOf(p.ticker), d = dividendsOf(p) * fxOf(p.ticker)
+            const sales = p.sales || [], last = sales[sales.length - 1], r = realizedOf(p) * fxOf(p.ticker)
             return (
               <div key={p.ticker} className="flex items-center gap-3 font-mono text-[12px]">
                 <span className="w-16 text-sky-300 font-semibold">{p.ticker}</span>
                 <span className="flex-1 text-slate-500">sold {sales.reduce((a, s) => a + s.qty, 0)} shares{last ? ', last on ' + last.date : ''}</span>
                 <span style={{ color: pnlColor(r) }}>{moneyExact(r)}</span>
-                {d > 0 && <span className="text-slate-500">+ div {usd(d)}</span>}
                 <button onClick={() => onRemove(p.ticker)} title="Remove from the list (its profit is no longer counted)" className="text-slate-600 hover:text-terminal-red"><X size={12} /></button>
               </div>
             )
