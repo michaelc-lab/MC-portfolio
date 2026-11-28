@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { APPS_SCRIPT_URL, jsonp, safeUrl, fetchNews, stripSource } from '../lib/api'
+import { APPS_SCRIPT_URL, jsonp, safeUrl } from '../lib/api'
 import { Search, BarChart2, TrendingUp, Newspaper, Award, Users, Target, Star, Sparkles } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar } from 'recharts'
 import { fmtPrice, fmtPct, fmtLarge, fmt } from '../lib/utils'
@@ -440,152 +440,6 @@ const StockSelector = React.memo(function StockSelector({ allStocks, loading, on
 })
 
 // ── Analyze view ──────────────────────────────────────────────
-// ── Decision check: the checks that count, and whether they agree ──
-// The radar re-runs every 30 min: reuse the board for 10 min at most, then fetch it again
-let RD_BOARD_P = null, RD_BOARD_AT = 0
-const rdBoardOnce = () => {
-  if (RD_BOARD_P && Date.now() - RD_BOARD_AT < 10 * 60e3) return RD_BOARD_P
-  RD_BOARD_AT = Date.now()
-  return (RD_BOARD_P = jsonp(APPS_SCRIPT_URL + '?action=getNewsRadar').catch(e => { RD_BOARD_P = null; throw e }))
-}
-const hoursAgo = (iso, now) => { const t = new Date(iso).getTime(); return isFinite(t) ? (now.getTime() - t) / 36e5 : null }
-// ── Earnings timing, in US market time (New York): reports come out before the 9:30 open or after the 16:00 close ──
-const etNow = now => {
-  const o = {}
-  new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-    .formatToParts(now).forEach(p => { o[p.type] = p.value })
-  return { y: +o.year, m: +o.month, d: +o.day, min: (+o.hour % 24) * 60 + +o.minute }
-}
-const utcDay = (y, m, d) => Date.UTC(y, m - 1, d)
-const nextWeekday = t => { let x = t + 864e5; while ([0, 6].includes(new Date(x).getUTCDay())) x += 864e5; return x }
-// → null (nothing to show) | { kind: 'soon', days } | { kind: 'reported', ago: 0 | 1 | 'Fri'… }
-export function earningsState(e, now = new Date()) {
-  const m = e && typeof e.date === 'string' && e.date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (!m) return null
-  const et = etNow(now), day = utcDay(+m[1], +m[2], +m[3]), today = utcDay(et.y, et.m, et.d)
-  const days = Math.round((day - today) / 864e5)
-  if (days > 14) return null
-  if (days >= 1) return { kind: 'soon', days }
-  if (days === 0) {
-    if (e.hour === 'bmo' && et.min >= 9 * 60 + 30) return { kind: 'reported', ago: 0 }
-    if (e.hour === 'amc' && et.min >= 16 * 60) return { kind: 'reported', ago: 0 }
-    return { kind: 'soon', days: 0 }
-  }
-  // after-the-close reports move the price on the NEXT trading day — keep saying so until that day ends (Fri report → through Monday)
-  if (e.hour === 'amc' && today <= nextWeekday(day)) return { kind: 'reported', ago: days === -1 ? 1 : new Date(day).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }) }
-  return null
-}
-const fmtDay = ymd => { const [y, mo, d] = ymd.split('-').map(Number); return new Date(y, mo - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
-export function earningsRow(e, now = new Date()) {
-  const st = earningsState(e, now)
-  if (!st) return null
-  if (st.kind === 'reported') {
-    const when = st.ago === 0 ? 'today' : st.ago === 1 ? 'yesterday' : 'on ' + st.ago
-    const text = st.ago === 0 && e.hour === 'amc' ? `Reported today after the close (${fmtDay(e.date)}) — expect the move at the next open`
-      : `Reported ${when} ${e.hour === 'bmo' ? 'before the open' : 'after the close'} (${fmtDay(e.date)}) — the price may still be adjusting`
-    return { tone: 'warn', dir: 0, soon: 'just', text }
-  }
-  const d = st.days, when = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`
-  const hr = e.hour === 'bmo' ? ', before the open' : e.hour === 'amc' ? ', after the close' : ''
-  return { tone: d <= 7 ? 'warn' : 'info', dir: 0, soon: d <= 7 ? 'close' : false, text: `Earnings ${when} (${fmtDay(e.date)}${hr})${d <= 7 ? ' — expect a big move either way' : ''}` }
-}
-export function decisionRows(data, board, now = new Date(), news = null) {
-  const rows = []
-  const pc = data.priceCheck || {}
-  rows.push(pc.status === 'ok' ? { tone: 'ok', dir: 0, text: `Price confirmed by two sources (Google Finance ${fmtPrice(pc.gf)} · Finnhub ${fmtPrice(pc.fh)})` }
-    : pc.status === 'warn' ? { tone: 'warn', dir: 0, gate: true, text: `Price sources disagree by ${Math.abs(pc.diff).toFixed(1)}% (Google Finance ${fmtPrice(pc.gf)} vs Finnhub ${fmtPrice(pc.fh)}) — check your broker before trading` }
-    : pc.status === 'gap' ? { tone: 'info', dir: 0, text: `Prices differ by ${Math.abs(pc.diff).toFixed(1)}% right now (Google Finance ${fmtPrice(pc.gf)} vs Finnhub ${fmtPrice(pc.fh)}) — Google can lag up to 20 min on a fast day` }
-    : { tone: 'na', dir: 0, text: 'Price from one source only' })
-  const er = earningsRow(data.nextEarnings, now)
-  if (er) rows.push(er)
-  // the calendar didn't answer: say so — never let "no row" read as "no earnings soon"
-  else if (data.earningsOn === false) rows.push({ tone: 'warn', dir: 0, soon: 'unknown', text: "Earnings date unknown — the calendar didn't answer. Check before trading" })
-  // News: the S&P 500 news scanner first (several sources, important events only); the older news check covers the rest
-  const ev = news && Array.isArray(news.events) ? news.events.filter(e => e.ticker === data.ticker)
-    .sort((a, b) => (a.tier || 1) - (b.tier || 1) || new Date(b.time) - new Date(a.time))[0] : null
-  if (ev) {
-    const n = (ev.sourceCount || 1) - 1
-    rows.push({ tone: 'info', dir: 0, url: ev.url, text: `In the news: ${ev.label} — ${stripSource(ev.headline, ev.source)} — ${ev.official ? 'official, ' : ''}${ev.source}${n > 0 ? ` +${n} source${n === 1 ? '' : 's'}` : ''}`,
-      sub: ev.sec ? `Official filing (${ev.sec.form}) on ${ev.sec.date}: ${(ev.sec.items || []).join(', ')}` : null, subUrl: ev.sec ? ev.sec.url : null })
-  } else {
-    const rdAge = board && !board.error && board.meta ? hoursAgo(board.meta.lastRun, now) : null
-    if (!board) rows.push({ tone: 'na', dir: 0, text: 'Checking the news…' })
-    else if (board.error) rows.push({ tone: 'na', dir: 0, text: 'News unavailable right now' })
-    else if (rdAge != null && rdAge > 2) rows.push({ tone: 'na', dir: 0, text: `News last updated ${Math.round(rdAge)} h ago` })
-    else if (board.meta && board.meta.headlines === 0) rows.push({ tone: 'na', dir: 0, text: 'News unavailable — no headlines received (feeds may be down)' })
-    else {
-      const sig = (board.signals || []).find(x => x.ticker === data.ticker)
-      rows.push(!sig ? { tone: 'na', dir: 0, text: 'No news on this stock in the last 2 days' }
-        : { tone: 'info', dir: 0, url: sig.url, text: `In the news: ${stripSource(sig.headline, sig.source)}${sig.source ? ' — ' + sig.source : ''}`,
-            sub: sig.sec ? `The company also filed ${/^8/.test(sig.sec.form) ? 'an' : 'a'} ${sig.sec.form} on ${sig.sec.date} — open it to see if it's related` : null, subUrl: sig.sec ? sig.sec.url : null })
-    }
-  }
-  if (data.secOn) {
-    const f = (data.sec || [])[0]
-    rows.push(f ? { tone: f.negative ? 'neg' : 'info', dir: f.negative ? -1 : 0, url: f.url,
-        text: f.items && f.items.length ? `Official filing ${f.date}: ${f.items.join(', ')}` : `Official company filing (${f.form}) on ${f.date} — open it to see what the company reported` }
-      : { tone: 'na', dir: 0, text: 'No official company filings in the last 7 days' })
-  }
-  const since = Date.now() - 90 * 864e5
-  // the Analyze payload stores each trade's date as `date` (Finnhub's transactionDate, renamed)
-  const recent = (data.insiders || []).filter(x => new Date(x.date || x.transactionDate || x.filingDate).getTime() >= since)
-  const buys = recent.filter(x => x.transactionCode === 'P' && x.isPlanBuy !== true), sells = recent.filter(x => x.transactionCode === 'S')
-  // selling only matters when it is large relative to the company's size
-  const mcapM = data.profile && Number(data.profile.marketCapitalization) > 0 ? Number(data.profile.marketCapitalization) : null
-  const since180 = Date.now() - 180 * 864e5
-  const sold180 = (data.insiders || []).filter(x => x.transactionCode === 'S' && new Date(x.date || x.transactionDate || x.filingDate).getTime() >= since180)
-    .reduce((s, x) => s + Math.abs(Number(x.value) || 0), 0)
-  const sellPct = mcapM ? sold180 / (mcapM * 1e6) * 100 : null
-  rows.push(buys.length ? { tone: 'pos', dir: 1, text: `Insiders bought shares with their own money (${buys.length} purchase${buys.length === 1 ? '' : 's'} in 90 days)` }
-    : sellPct !== null && sellPct >= 1 ? { tone: 'neg', dir: -1, text: `Insiders sold ~${sellPct.toFixed(1)}% of the company in 6 months — unusually large` }
-    : sellPct !== null && sellPct >= 0.25 ? { tone: 'na', dir: 0, text: `Insiders sold ~${sellPct.toFixed(2)}% of the company in 6 months — notable, but not decisive` }
-    : sells.length ? { tone: 'na', dir: 0, text: `Insiders only sold (${sells.length} in 90 days) — routine for a company this size, often pre-planned` }
-    : { tone: 'na', dir: 0, text: 'No insider trades in the last 90 days' })
-  // facts only — no "signals agree" verdict (the tested signals didn't beat chance). The headline flags what needs care.
-  const summary = rows.some(r => r.gate) ? { tone: 'warn', text: 'Verify the price first — the data sources disagree' }
-    : rows.some(r => r.soon === 'just') ? { tone: 'warn', text: 'Earnings just came out — expect a big move' }
-    : rows.some(r => r.soon === 'close') ? { tone: 'warn', text: 'Earnings are close — expect a big move either way' }
-    : rows.some(r => r.soon === 'unknown') ? { tone: 'warn', text: 'Earnings date unknown — check before trading' }
-    : { tone: 'na', text: 'Facts to check — no buy/sell call' }
-  return { rows, summary }
-}
-const DC_TONE = { ok: ['✓', '#00ff88'], pos: ['▲', '#00ff88'], neg: ['▼', '#ff4466'], warn: ['⚠', '#ffb800'], info: ['•', '#94a3b8'], na: ['·', '#475569'] }
-function DecisionCheck({ data }) {
-  const [board, setBoard] = useState(null)
-  const [news, setNews] = useState(null)
-  useEffect(() => {
-    let alive = true
-    rdBoardOnce().then(b => alive && setBoard(b || { signals: [] })).catch(() => alive && setBoard({ error: true }))
-    fetchNews().then(n => alive && setNews(n)).catch(() => {})
-    return () => { alive = false }
-  }, [])
-  const { rows, summary } = decisionRows(data, board, new Date(), news)
-  const sc = DC_TONE[summary.tone] || DC_TONE.na
-  return (
-    <div className="panel p-5 font-display" data-testid="decision-check">
-      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
-        <span className="text-[15px] text-slate-100">Decision check</span>
-        <span style={{ color: sc[1] }} className="text-[13px]">{summary.text}</span>
-      </div>
-      <div className="space-y-2">
-        {rows.map((r, i) => {
-          const t = DC_TONE[r.tone] || DC_TONE.na
-          return (
-            <div key={i} className="flex gap-3 text-[13px] leading-snug">
-              <span style={{ color: t[1] }} className="w-4 text-center flex-shrink-0">{t[0]}</span>
-              <div className="min-w-0">
-                <span className="text-slate-300">{safeUrl(r.url) ? <a href={safeUrl(r.url)} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.text}</a> : r.text}</span>
-                {r.sub && <div className="text-[11px] text-slate-600">{safeUrl(r.subUrl) ? <a href={safeUrl(r.subUrl)} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.sub}</a> : r.sub}</div>}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      <div className="mt-3 text-[11px] text-slate-600">A checklist of facts, not advice.</div>
-    </div>
-  )
-}
-
 function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
   const [data,        setData]        = useState(null)
   const [revenueData, setRevenueData] = useState(null)
@@ -747,8 +601,6 @@ function AnalyzeView({ portfolio, watchlist, initialTicker, isMobile }) {
               </div>
             </div>
           </div>
-
-          <DecisionCheck key={data.ticker} data={data} />
 
           {/* Phase 1: Earnings Quality + Price Targets + Insider Activity */}
           <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>

@@ -329,7 +329,8 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
   const [cashEdit, setCashEdit]   = useState(false)
 
   useEffect(() => {
-    const missing = allPositions.filter(p => !quotes[p.ticker])
+    // (was allPositions — a name that exists only in the investment table: every tracking portfolio crashed; fixed Nov 28)
+    const missing = positions.filter(p => !quotes[p.ticker])
     if (!missing.length) return
     setLoading(new Set(missing.map(p => p.ticker)))
     fetchQuotes(missing.map(p => p.ticker)).then(map => {
