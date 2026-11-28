@@ -470,6 +470,7 @@ export function SystemHealth({ where }) {
     <div className="font-display text-[11px] text-slate-600 px-1" data-testid="health-footer">
       System health <span className={h.ok ? 'text-terminal-green/80' : 'text-terminal-amber'}>{h.ok ? '✓' : '⚠'}</span>
       {shown.map(j => <span key={j.id}> · {j.name} {j.status === 'down' ? <span className="text-terminal-amber">failing</span> : shAge(j.lastOkMin)}</span>)}
+      {h.storage && h.storage.pct != null && <span data-testid="health-storage"> · Portfolio storage <span className={h.storage.warn ? 'text-terminal-amber' : ''}>{h.storage.pct}%</span></span>}
     </div>
   )
 }

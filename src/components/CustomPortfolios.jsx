@@ -31,9 +31,30 @@ async function loadFromSheet(userId) {
     const d = await jsonp(`${APPS_SCRIPT_URL}?action=getCustomPortfolios&userId=${encodeURIComponent(userId)}`)
     // a backend error is a FAILED load (null), never "you have no portfolios" — that would let a save wipe them
     if (isLocked(d)) return 'locked'                                  // the owner key is missing or wrong
-    return d && !d.error && Array.isArray(d.portfolios) ? d.portfolios : null
+    // ts = when the stored copy was edited (0 = unknown / older backend)
+    return d && !d.error && Array.isArray(d.portfolios) ? { list: d.portfolios, ts: Number(d.ts) || 0 } : null
   } catch { return null }
 }
+
+// ── Changes this device has not yet got into the cloud ────────
+// Kept per Sync ID with the edit time, and removed once the cloud has them. On the next visit, if they are newer than
+// the cloud's copy, they win and are saved (Nov 28 audit: a failed save used to be lost on reload).
+const UNSAVED_KEY = 'mc_unsaved_v1'
+const readUnsavedAll = () => { try { return JSON.parse(localStorage.getItem(UNSAVED_KEY) || '{}') || {} } catch { return {} } }
+export function readUnsaved(uid) { const u = readUnsavedAll()[uid]; return u && Array.isArray(u.data) && Number(u.ts) > 0 ? u : null }
+export function markUnsaved(uid, ts, data) {
+  const all = readUnsavedAll(); all[uid] = { ts, data }
+  try { localStorage.setItem(UNSAVED_KEY, JSON.stringify(all)) } catch (e) {}
+}
+export function clearUnsaved(uid, ts) {                              // only if nothing newer was edited meanwhile
+  const all = readUnsavedAll()
+  if (all[uid] && Number(all[uid].ts) <= ts) { delete all[uid]; try { localStorage.setItem(UNSAVED_KEY, JSON.stringify(all)) } catch (e) {} }
+}
+// waits between retries of a failed save: 15 s, 30 s, 1 min, then every 2 min while the page is open
+export const retryWait = n => [15, 30, 60][n] || 120
+const secondMs = () => (typeof window !== 'undefined' && window.__mcSecondMs) || 1000   // tests shrink the waits
+// a save the backend refused for good (retrying cannot help)
+export const isPermanentSaveError = msg => /too large|invalid data/i.test(String(msg || ''))
 
 // Saves in small pieces: a whole portfolio set is too long for one request address.
 // Throws on failure, so the screen can say so (it used to show "saved" even when nothing reached the Sheet).
@@ -894,7 +915,8 @@ export default function CustomPortfolios({ onAnalyze }) {
   const [renameVal,    setRenameVal]    = useState('')
   const [deleteConfirm,setDeleteConfirm]= useState(null)
   const [syncing,      setSyncing]      = useState(false)
-  const [syncStatus,   setSyncStatus]   = useState('') // 'saved' | 'error' | ''
+  const [syncStatus,   setSyncStatus]   = useState('') // 'saving' | 'saved' | 'unsaved' | 'offline' | 'wait' | 'locked' | ''
+  const [saveWhy,      setSaveWhy]      = useState('')   // shown only as the tooltip of "Unsaved"
   const [userId,  setUserId]  = useState(() => getSavedId())
   const [loadTick, setLoadTick] = useState(0)
   const [pinInput, setPinInput] = useState('')
@@ -948,20 +970,54 @@ export default function CustomPortfolios({ onAnalyze }) {
         setTimeout(() => alive && setLoadTick(t => t + 1), 15000)
         return
       }
-      if (data && data.length > 0) { setPortfolios(data); setActiveId(data[0].id) }
+      const un = readUnsaved(userId)
+      const mine = un && un.ts > data.ts                              // this device has newer changes the cloud never got
+      if (mine) { setPortfolios(un.data); setActiveId(un.data.length ? un.data[0].id : null) }
+      else if (data.list.length > 0) { setPortfolios(data.list); setActiveId(data.list[0].id) }
       else if (firstLoad.current) {                                   // this browser's copy (offline, or one-time migration) — as before
         const local = localCopy()
         setPortfolios(local); setActiveId(local.length ? local[0].id : null)
       } else { setPortfolios([]); setActiveId(null) }                 // a different ID with nothing stored yet
-      if (data !== null) setSyncStatus('')
+      if (un && !mine) clearUnsaved(userId, un.ts)                    // the cloud already has something newer
+      setSyncStatus('saved'); setSaveWhy('')
       firstLoad.current = false
       loadedFor.current = userId
       setSyncing(false); setReady(true)
+      if (mine) startSave(userId, un.data, un.ts)                     // send them now
     })
     return () => { alive = false }
   }, [userId, loadTick])
 
-  // Auto-save to Sheet with debounce
+  // Save to the Sheet: 1 s after the last edit, then — if it fails — again and again (15 s, 30 s, 1 min, then every 2 min)
+  // until it gets through, while the page is open. Until then the change is also kept on this device (see readUnsaved).
+  function startSave(uid, updated, ts) {
+    markUnsaved(uid, ts, updated)
+    clearTimeout(saveTimer.current)
+    const seq = ++saveSeq.current
+    const stale = () => saveSeq.current !== seq || uidRef.current !== uid   // a newer edit (or another ID) → drop this save
+    let tries = 0
+    setSyncStatus('saving'); setSaveWhy('')
+    const attempt = async () => {
+      if (stale()) return
+      setSyncStatus('saving')
+      try {
+        const r = await saveToSheet(uid, updated, jsonp, ts, stale)
+        if (r === 'superseded' || stale()) return
+        clearUnsaved(uid, ts)
+        setSyncStatus('saved'); setSaveWhy('')
+      } catch (e) {
+        if (stale()) return
+        if (e && e.message === 'locked') { setSyncStatus('locked'); setReady(false); loadedFor.current = null; return }
+        const msg = (e && e.message) || 'Save failed'
+        setSyncStatus('unsaved')
+        if (isPermanentSaveError(msg)) { setSaveWhy(msg + ' — kept on this device'); return }
+        const w = retryWait(tries++)
+        setSaveWhy(msg + ' — kept on this device, trying again in ' + (w < 60 ? w + ' s' : w / 60 + ' min'))
+        saveTimer.current = setTimeout(attempt, w * secondMs())
+      }
+    }
+    saveTimer.current = setTimeout(attempt, 1000)
+  }
   const persistPortfolios = useCallback((updated) => {
     const uid = uidRef.current
     // edits are only accepted once this ID's portfolios have loaded — an edit made on top of an empty or
@@ -971,23 +1027,7 @@ export default function CustomPortfolios({ onAnalyze }) {
     try { localStorage.setItem('mc_custom_portfolios_v1', JSON.stringify(updated)) } catch (e) {}   // a full/blocked browser store must not stop the cloud save
     clearTimeout(saveTimer.current)
     if (!uid) return                                                   // no ID yet → this browser only
-    const seq = ++saveSeq.current, ts = Date.now()
-    const stale = () => saveSeq.current !== seq || uidRef.current !== uid   // a newer edit (or another ID) → drop this save
-    const attempt = async (retry) => {
-      if (stale()) return
-      try {
-        const r = await saveToSheet(uid, updated, jsonp, ts, stale)
-        if (r === 'superseded' || stale()) return
-        setSyncStatus('saved')
-        setTimeout(() => setSyncStatus(s => s === 'saved' ? '' : s), 2000)
-      } catch (e) {
-        if (stale()) return
-        if (e && e.message === 'locked') { setSyncStatus('locked'); setReady(false); loadedFor.current = null; return }
-        setSyncStatus('error')                                   // stays visible until a save succeeds
-        if (retry) saveTimer.current = setTimeout(() => attempt(false), 15000)
-      }
-    }
-    saveTimer.current = setTimeout(() => attempt(true), 1000)
+    startSave(uid, updated, Date.now())
   }, [])
 
   useEffect(() => {
@@ -1115,12 +1155,13 @@ export default function CustomPortfolios({ onAnalyze }) {
 
         {/* Sync status + User ID */}
         <div className="ml-auto flex items-center gap-3">
-          {syncing && <span className="font-mono text-[10px] text-slate-600 uppercase tracking-wider animate-pulse">Syncing…</span>}
-          {syncStatus === 'saved' && <span className="font-mono text-[10px] text-terminal-green uppercase tracking-wider">✓ Saved</span>}
-          {syncStatus === 'offline' && <span className="font-mono text-[10px] text-terminal-amber tracking-wider">Can't reach your saved portfolios — editing paused, retrying</span>}
-          {syncStatus === 'locked' && <OwnerKeyUnlock onUnlock={() => { setSyncStatus(''); setLoadTick(t => t + 1) }} />}
-          {syncStatus === 'wait' && <span className="font-mono text-[10px] text-slate-400 tracking-wider">Still loading — try again in a moment</span>}
-          {syncStatus === 'error' && <span title="Your changes are kept on this device and will be saved again automatically. If this persists, check your connection." className="font-mono text-[10px] text-terminal-red uppercase tracking-wider">⚠ Not saved to the cloud — kept on this device</span>}
+          {/* one small status label: Loading… · Saving… · Saved · Unsaved (the reason only as a tooltip) */}
+          {syncStatus === 'locked' ? <OwnerKeyUnlock onUnlock={() => { setSyncStatus(''); setLoadTick(t => t + 1) }} />
+            : (syncing || syncStatus === 'offline' || syncStatus === 'wait') ? <span data-testid="save-status" className="font-mono text-[10px] text-slate-500 uppercase tracking-wider animate-pulse">Loading…</span>
+            : syncStatus === 'saving' ? <span data-testid="save-status" className="font-mono text-[10px] text-slate-400 uppercase tracking-wider animate-pulse">Saving…</span>
+            : syncStatus === 'saved' ? <span data-testid="save-status" className="font-mono text-[10px] text-terminal-green uppercase tracking-wider">Saved</span>
+            : syncStatus === 'unsaved' ? <span data-testid="save-status" title={saveWhy} className="font-mono text-[10px] text-terminal-amber uppercase tracking-wider cursor-help">Unsaved</span>
+            : null}
           <UserIdBadge userId={userId} onReset={() => { clearTimeout(saveTimer.current); saveId(''); setUserId(null); setPortfolios([]); setActiveId(null) }} />
         </div>
       </div>
