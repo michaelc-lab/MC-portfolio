@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { APPS_SCRIPT_URL, jsonp, isLocked, getOwnerKey, setOwnerKey } from '../lib/api'
 import { Plus, X, Edit2, Trash2, Check, TrendingUp, DollarSign, BarChart2, Search } from 'lucide-react'
 import { fmtMoney, fmtPrice, fmtPct, fmtLarge } from '../lib/utils'
-import { recordSale, recordDividend, isClosed } from '../lib/portfolioMath'
+import { recordSale, recordDividend, isClosed, lotsOf } from '../lib/portfolioMath'
 import { PortfolioSummary, PerformancePanel, AllocationPanel, SellModal, DividendModal, CashModal, ClosedPositions } from './PortfolioExtras'
 
 const QUOTE_CACHE = {}
@@ -467,6 +467,61 @@ function TrackingTable({ positions, onRemove, onAdd, onAnalyze }) {
   )
 }
 
+// ── Purchases & sales of one stock (opens under its row when you click the ticker) ──
+// Purchases show what you originally bought (a later sale doesn't change them); sales show the profit at your average cost.
+export function LotsDetail({ p, cur }) {
+  if (!p) return null
+  const money = v => fmtMoney(v, cur)
+  const buys = lotsOf(p).map(l => ({ date: l.buyDate || '', qty: Number(l.orig) || 0, price: Number(l.buyPrice) || 0 }))
+    .sort((a, b) => (a.date || '0') < (b.date || '0') ? -1 : (a.date || '0') > (b.date || '0') ? 1 : 0)   // undated first (they count from Dec 31)
+  const sales = (p.sales || []).slice().sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
+  const bQty = buys.reduce((a, x) => a + x.qty, 0), bAmt = buys.reduce((a, x) => a + x.qty * x.price, 0)
+  const sQty = sales.reduce((a, x) => a + x.qty, 0), sAmt = sales.reduce((a, x) => a + x.qty * x.price, 0)
+  const sPnl = sales.reduce((a, x) => a + x.qty * (x.price - x.cost), 0)
+  const q = v => Number(Number(v).toFixed(6)).toLocaleString('en-US', { maximumFractionDigits: 6 })
+  const th = { textAlign: 'right', padding: '3px 10px', fontWeight: 400, color: '#475569', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em' }
+  const td = { textAlign: 'right', padding: '3px 10px', color: '#94a3b8', fontSize: '11px', whiteSpace: 'nowrap' }
+  const tot = { ...td, color: '#cbd5e1', borderTop: '1px solid rgba(255,255,255,0.08)' }
+  const pnlC = v => v >= 0 ? '#00ff88' : '#ff4466'
+  const sign = v => (v >= 0 ? '+' : '−') + money(Math.abs(v))
+  const head = { fontSize: '10px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.12em' }
+  return (
+    <div data-testid="lots-detail" style={{ fontFamily: 'IBM Plex Mono,monospace', padding: '6px 0 10px 18px' }}>
+      <div style={{ ...head, marginBottom: 2 }}>Purchases</div>
+      <table style={{ borderCollapse: 'collapse' }}>
+        <thead><tr><th style={{ ...th, textAlign: 'left' }}>Date</th><th style={th}>Shares</th><th style={th}>Price</th><th style={th}>Amount</th><th style={th}></th></tr></thead>
+        <tbody>
+          {buys.map((b, i) => (
+            <tr key={'b' + i} data-testid="lot-row">
+              <td style={{ ...td, textAlign: 'left' }}>{b.date || 'No date'}</td><td style={td}>{q(b.qty)}</td><td style={td}>{money(b.price)}</td><td style={td}>{money(b.qty * b.price)}</td>
+              <td style={{ ...td, color: '#475569', textAlign: 'left' }}>{b.date ? '' : '(counted from Dec 31)'}</td>
+            </tr>
+          ))}
+          {buys.length > 1 && (
+            <tr data-testid="lot-total"><td style={{ ...tot, textAlign: 'left' }}>Total</td><td style={tot}>{q(bQty)}</td><td style={tot}>{bQty ? money(bAmt / bQty) : '—'}</td><td style={tot}>{money(bAmt)}</td><td style={{ ...td }}></td></tr>
+          )}
+        </tbody>
+      </table>
+      {sales.length > 0 && <>
+        <div style={{ ...head, margin: '10px 0 2px' }}>Sales</div>
+        <table style={{ borderCollapse: 'collapse' }}>
+          <thead><tr><th style={{ ...th, textAlign: 'left' }}>Date</th><th style={th}>Shares sold</th><th style={th}>Price</th><th style={th}>Amount</th><th style={th}>Profit</th></tr></thead>
+          <tbody>
+            {sales.map((x, i) => { const pl = x.qty * (x.price - x.cost); return (
+              <tr key={'s' + i} data-testid="sale-row">
+                <td style={{ ...td, textAlign: 'left' }}>{x.date}</td><td style={td}>{q(x.qty)}</td><td style={td}>{money(x.price)}</td><td style={td}>{money(x.qty * x.price)}</td>
+                <td style={{ ...td, color: pnlC(pl) }}>{sign(pl)}</td>
+              </tr>) })}
+            {sales.length > 1 && (
+              <tr data-testid="sale-total"><td style={{ ...tot, textAlign: 'left' }}>Total</td><td style={tot}>{q(sQty)}</td><td style={tot}></td><td style={tot}>{money(sAmt)}</td><td style={{ ...tot, color: pnlC(sPnl) }}>{sign(sPnl)}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </>}
+    </div>
+  )
+}
+
 // ── Investment Table ──────────────────────────────────────────
 function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, onAnalyze, cash = 0, onSell, onDividend, onSetCash, isMobile }) {
   const positions = allPositions.filter(p => !isClosed(p))
@@ -480,6 +535,7 @@ function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, o
   const [sellPos, setSellPos]     = useState(null)
   const [divPos, setDivPos]       = useState(null)
   const [cashEdit, setCashEdit]   = useState(false)
+  const [openT, setOpenT]         = useState(null)                // the stock whose purchases are shown
 
   useEffect(() => {
     const missing = allPositions.filter(p => !quotes[p.ticker])
@@ -646,10 +702,15 @@ function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, o
             <tbody>
               {sorted.map((r, idx) => {
                 const isLoading = loading.has(r.ticker)
+                const isOpen = openT === r.ticker
                 return (
-                  <tr key={r.ticker} className="group">
+                  <React.Fragment key={r.ticker}>
+                  <tr className="group">
                     <td style={{...tdStyle('center'), color:'#334155', fontSize:'11px'}}>{idx + 1}</td>
-                    <td style={tdStyle('left')}><span style={{fontWeight:'700',fontSize:'13px',color:'#7dd3fc'}}>{r.ticker}</span>
+                    <td style={tdStyle('left')}><button data-testid={'lots-toggle-' + r.ticker} aria-expanded={isOpen} onClick={() => setOpenT(isOpen ? null : r.ticker)}
+                        title={isOpen ? 'Hide purchases' : 'Show purchases and sales'}
+                        style={{fontWeight:'700',fontSize:'13px',color:'#7dd3fc',background:'none',border:'none',padding:0,cursor:'pointer',fontFamily:'inherit'}}>
+                        {r.ticker}<span style={{color:'#475569',fontSize:'9px',marginLeft:5}}>{isOpen ? '▾' : '▸'}</span></button>
                       {r.splitDue && <button data-testid="split-adjust" onClick={() => onUpdate(applySplitToPosition(positions.find(x => x.ticker === r.ticker), r.splitDue))}
                         title="Your quantity and buy price are from before the split. Tap to convert them (value and P&L stay the same)."
                         style={{display:'block',marginTop:2,fontSize:'10px',color:'#ffb800',background:'none',border:'none',padding:0,cursor:'pointer',textAlign:'left'}}>
@@ -723,6 +784,13 @@ function InvestmentTable({ positions: allPositions, onRemove, onAdd, onUpdate, o
                       </div>
                     </td>
                   </tr>
+                  {isOpen && (
+                    <tr data-testid="lots-row" style={{background:'rgba(14,165,233,0.02)'}}>
+                      <td></td>
+                      <td colSpan={12} style={{padding:0}}><LotsDetail p={positions.find(x => x.ticker === r.ticker)} cur={r.cur} /></td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 )
               })}
 
